@@ -5,12 +5,19 @@ using System.Collections.Generic;
 using System.Diagnostics.Eventing.Reader;
 using System.Xml;
 using Microsoft.Diagnostics.Tracing.Parsers.IIS_Trace;
-
-partial class Program
+using System.Diagnostics;
+using System.Threading;
+using System.IO;
+public partial class Program
 {
     Dictionary<string, string> ageMap = new Dictionary<string, string>();
-    static void Main(string[] args)
+    private static List<string> logEntries = new List<string>();
+    private static object logLock = new object();
+
+    public static void Main(string[] args)
+
     {
+        logEntries.Add("Activity Log - " + DateTime.Now);
         Console.WriteLine("Enter process name to monitor");
         string targetProcess = Console.ReadLine()?.ToLower() ?? "";
 
@@ -20,12 +27,27 @@ partial class Program
             return;
         }
 
-         MonitorSysmon(targetProcess);
+        Console.CancelKeyPress += (sender, e) =>
+        {
+            e.Cancel = true;
+            Console.WriteLine("\nSaving logs to file...");
+            SaveAllLogsToFile("activity_log.txt");
+            Console.WriteLine("Logs saved. Exiting.");
+            Environment.Exit(0);
+        };
+
+        Thread workerThread = new Thread(new ThreadStart(() => MonitorSysmon(targetProcess)));
+        workerThread.Start();
+        Thread workerThread1 = new Thread(new ThreadStart(() => MonitorProcess(targetProcess)));
+        workerThread1.Start();
+
+        workerThread.Join();
+        workerThread1.Join();
     }
 
     public static void MonitorSysmon(string targetProcess)
     {
-         if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsWindows())
         {
             Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
             return;
@@ -40,20 +62,23 @@ partial class Program
 
             watcher.EventRecordWritten += (sender, e) =>
             {
-                 if (!OperatingSystem.IsWindows()) {
-            Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
-            return;
-        }
+                if (!OperatingSystem.IsWindows())
+                {
+                    Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
+                    return;
+                }
                 if (e.EventRecord != null)
                 {
                     ProcessSysmonEvent(e.EventRecord, targetProcess);
                 }
-
             };
 
             watcher.Enabled = true;
-            Console.ReadLine();
 
+            while (true)
+            {
+                Thread.Sleep(1000);
+            }
         }
     }
 
@@ -84,7 +109,9 @@ partial class Program
                 Console.WriteLine($"  {name}: {value}");
             }
             Console.WriteLine("---------------------------------------------------------");
-        } catch (Exception ex)
+
+        }
+        catch (Exception ex)
         {
             Console.WriteLine($"Error processing Sysmon event: {ex.Message}");
         }
@@ -113,7 +140,8 @@ partial class Program
                 KernelTraceEventParser.Keywords.FileIO |
                 KernelTraceEventParser.Keywords.FileIOInit |
                 KernelTraceEventParser.Keywords.Process |
-                KernelTraceEventParser.Keywords.Registry
+                KernelTraceEventParser.Keywords.Registry |
+                KernelTraceEventParser.Keywords.Memory
             );
 
             Console.WriteLine($"Monitoring '{targetProcess}' for file activity...");
@@ -126,25 +154,59 @@ partial class Program
 
                 if (process.Contains(targetProcess))
                 {
+                    Console.WriteLine($"Type: Registry create");
                     Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                      Console.WriteLine($"        Time: {data.KeyName}");
+                    Console.WriteLine($"        Key path: {data.KeyName}");
                     Console.WriteLine($"        Time: {data.TimeStamp}");
                     Console.WriteLine("---------------------------------------------------------");
+
+                    AddLogEntry($"Type: Registry create");
+                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
+                    AddLogEntry($"        Key path: {data.KeyName}");
+                    AddLogEntry($"        Time: {data.TimeStamp}");
+                    AddLogEntry("---------------------------------------------------------");
                 }
             };
 
-              session.Source.Kernel.RegistryOpen += data =>
+            session.Source.Kernel.RegistryOpen += data =>
             {
                 string process = data.ProcessName?.ToLower() ?? "";
 
                 if (process.Contains(targetProcess))
                 {
+                    Console.WriteLine($"Type: Registry open");
                     Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                      Console.WriteLine($"        Time: {data.KeyName}");
+                    Console.WriteLine($"        Key path: {data.KeyName}");
                     Console.WriteLine($"        Time: {data.TimeStamp}");
                     Console.WriteLine("---------------------------------------------------------");
+
+                    AddLogEntry($"Type: Registry open");
+                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
+                    AddLogEntry($"        Key path: {data.KeyName}");
+                    AddLogEntry($"        Time: {data.TimeStamp}");
+                    AddLogEntry("---------------------------------------------------------");
                 }
             };
+
+            session.Source.Kernel.RegistrySetValue += data =>
+         {
+             string process = data.ProcessName?.ToLower() ?? "";
+
+             if (process.Contains(targetProcess))
+             {
+                 Console.WriteLine($"Type: Registry change");
+                 Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
+                 Console.WriteLine($"        Key path: {data.KeyName}");
+                 Console.WriteLine($"        Time: {data.TimeStamp}");
+                 Console.WriteLine("---------------------------------------------------------");
+
+                 AddLogEntry($"Type: Registry change");
+                 AddLogEntry($"[WRITE] Process: {data.ProcessName}");
+                 AddLogEntry($"        Key path: {data.KeyName}");
+                 AddLogEntry($"        Time: {data.TimeStamp}");
+                 AddLogEntry("---------------------------------------------------------");
+             }
+         };
             session.Source.Kernel.FileIOWrite += data =>
             {
                 string process = data.ProcessName?.ToLower() ?? "";
@@ -152,11 +214,19 @@ partial class Program
 
                 if (process.Contains(targetProcess))
                 {
+                    Console.WriteLine($"Type: File write");
                     Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        File: {data.ID}");
+                    Console.WriteLine($"       File: {data.FileName}");
                     Console.WriteLine($"        Size: {data.IoSize} bytes");
                     Console.WriteLine($"        Time: {data.TimeStamp}");
                     Console.WriteLine("---------------------------------------------------------");
+
+                    AddLogEntry($"Type: File write");
+                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
+                    AddLogEntry($"        File: {data.FileName}");
+                    AddLogEntry($"        Size: {data.IoSize} bytes");
+                    AddLogEntry($"        Time: {data.TimeStamp}");
+                    AddLogEntry("---------------------------------------------------------");
                 }
             };
 
@@ -167,16 +237,98 @@ partial class Program
 
                 if (process.Contains(targetProcess))
                 {
+                    Console.WriteLine($"Type: File read");
                     Console.WriteLine($"[READ] Process: {data.ProcessName}");
                     Console.WriteLine($"       ID: {data.ProcessID}");
                     Console.WriteLine($"       File: {data.FileName}");
                     Console.WriteLine($"       Size: {data.IoSize} bytes");
                     Console.WriteLine($"       Time: {data.TimeStamp}");
                     Console.WriteLine("---------------------------------------------------------");
+
+                    AddLogEntry($"Type: File read");
+                    AddLogEntry($"[READ] Process: {data.ProcessName}");
+                    AddLogEntry($"       ID: {data.ProcessID}");
+                    AddLogEntry($"       File: {data.FileName}");
+                    AddLogEntry($"       Size: {data.IoSize} bytes");
+                    AddLogEntry($"       Time: {data.TimeStamp}");
+                    AddLogEntry("---------------------------------------------------------");
                 }
             };
 
             session.Source.Process();
         }
+
     }
+
+    static void readPowerShellCommands()
+    {
+
+    }
+
+    static void dnsQuery()
+    {
+
+    }
+
+    static void enableFirewallMonitoring()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "auditpol.exe",
+                Arguments = "/set /subcategory:\"Filtering Platform Policy Change\" /success:enable /failure:enable",
+                Verb = "runas",
+                CreateNoWindow = true,
+                UseShellExecute = true
+            };
+            using var proc = Process.Start(psi);
+            proc.WaitForExit();
+            if (proc.ExitCode == 0)
+                Console.WriteLine("Firewall auditing policy enabled.");
+            else
+                Console.WriteLine("Failed to enable firewall auditing policy. Exit code: " + proc.ExitCode);
+            Environment.Exit(1);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error enabling firewall auditing: " + ex.Message);
+            Environment.Exit(1);
+        }
+
+    }
+
+    private static void AddLogEntry(string entry)
+    {
+        lock (logLock)
+        {
+            logEntries.Add(entry);
+        }
+    }
+
+    private static void SaveAllLogsToFile(string fileName)
+    {
+        lock (logLock)
+        {
+            if (logEntries.Count == 0)
+            {
+                Console.WriteLine("No log entries to save.");
+                return;
+            }
+
+            string docPath = Directory.GetCurrentDirectory();
+            string logPath = Path.Combine(docPath, fileName);
+
+            try
+            {
+                File.WriteAllLines(logPath, logEntries);
+                Console.WriteLine($"Saved {logEntries.Count} log entries to: {logPath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error saving logs: {ex.Message}");
+            }
+        }
+    }
+
 }
