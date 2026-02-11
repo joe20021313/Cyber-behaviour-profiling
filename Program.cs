@@ -41,8 +41,6 @@ public partial class Program
         Thread workerThread1 = new Thread(new ThreadStart(() => MonitorProcess(targetProcess)));
         workerThread1.Start();
 
-        workerThread.Join();
-        workerThread1.Join();
     }
 
     public static void MonitorSysmon(string targetProcess)
@@ -304,6 +302,11 @@ public partial class Program
         {
             logEntries.Add(entry);
         }
+    }
+
+    private static void sensetiveFolders(string [] folders)
+    {
+
     }
 
     private static void SaveAllLogsToFile(string fileName)
