@@ -9,7 +9,18 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- <UseWPF>true</UseWPF> -->
+    <StartupObject>Program</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="cyber behaviour profiling 2\**" />
+    <Compile Remove="TestApp\**" />
+    <Compile Remove="CyberProfiler.Tests\**" />
+    <EmbeddedResource Remove="cyber behaviour profiling 2\**" />
+    <EmbeddedResource Remove="CyberProfiler.Tests\**" />
+    <None Remove="cyber behaviour profiling 2\**" />
+    <None Remove="CyberProfiler.Tests\**" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.28" />

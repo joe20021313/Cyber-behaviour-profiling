@@ -1,0 +1,218 @@
+﻿{
+  "file_operations": {
+    "suspicious_reads": [
+      "\\google\\chrome\\user data\\default\\cookies",
+      "\\google\\chrome\\user data\\default\\network\\cookies",
+      "\\microsoft\\edge\\user data\\default\\cookies",
+      "\\microsoft\\edge\\user data\\default\\network\\cookies",
+      "\\mozilla\\firefox\\profiles\\",
+      "\\appdata\\local\\brave\\user data\\default\\cookies",
+      "\\google\\chrome\\user data\\default\\login data",
+      "\\google\\chrome\\user data\\default\\login data for account",
+      "\\microsoft\\edge\\user data\\default\\login data",
+      "\\mozilla\\firefox\\profiles\\logins.json",
+      "\\mozilla\\firefox\\profiles\\key4.db",
+      "\\brave\\user data\\default\\login data",
+      "\\opera software\\opera stable\\login data",
+      "\\microsoft\\credentials\\",
+      "\\microsoft\\protect\\",
+      "\\microsoft\\vault\\"
+    ],
+    "uncommon_writes": [
+      "c:\\perflogs\\",
+      "c:\\$recycle.bin\\",
+      "c:\\intel\\logs\\",
+      "c:\\users\\default\\",
+      "c:\\users\\public\\",
+      "c:\\windows\\fonts\\",
+      "c:\\windows\\debug\\",
+      "\\appdata\\local\\temp\\"
+    ],
+    "suspicious_overwrites": [
+      "sethc.exe",
+      "utilman.exe",
+      "osk.exe",
+      "magnify.exe",
+      "displayswitch.exe",
+      "narrator.exe",
+      "atbroker.exe"
+    ]
+  },
+  "registry": {
+    "persistence": [
+      "software\\microsoft\\windows\\currentversion\\run",
+      "software\\microsoft\\windows\\currentversion\\runonce",
+      "system\\currentcontrolset\\services",
+      "software\\microsoft\\windows nt\\currentversion\\winlogon"
+    ],
+    "tampering": [
+      "software\\microsoft\\amsi\\providers",
+      "software\\microsoft\\windows nt\\currentversion\\image file execution options"
+    ],
+    "uac_bypass": [
+      "software\\microsoft\\windows\\currentversion\\app paths\\control.exe",
+      "software\\classes\\exefile\\shell\\runas\\command\\isolatedcommand",
+      "software\\classes\\ms-settings\\shell\\open\\command",
+      "software\\wow6432node\\microsoft\\windows nt\\currentversion\\icm\\calibration"
+    ],
+    "credential_access": [
+      "software\\microsoft\\internet explorer\\intelliforms\\storage",
+      "software\\simontatham\\putty\\sessions",
+      "software\\realvnc",
+      "software\\tightvnc"
+    ]
+  },
+  "network": {
+    "suspicious_domains": [
+      "pastebin.com",
+      "raw.githubusercontent.com",
+      "ngrok.io",
+      "temp.sh",
+      "transfer.sh",
+      "discordapp.com/api/webhooks",
+      "t.me",
+      "api.telegram.org",
+      "file.io",
+      "anonfiles.com",
+      "gofile.io"
+    ],
+    "suspicious_ports": [
+      4444,
+      8080,
+      1337,
+      31337
+    ]
+  },
+  "processes": {
+    "lolbins": [
+      "cmd.exe",
+      "powershell.exe",
+      "wscript.exe",
+      "cscript.exe",
+      "regsvr32.exe",
+      "mshta.exe",
+      "rundll32.exe",
+      "sdclt.exe",
+      "certutil.exe",
+      "bitsadmin.exe",
+      "vssadmin.exe",
+      "whoami.exe",
+      "schtasks.exe",
+      "csc.exe",
+      "jsc.exe",
+      "msbuild.exe"
+    ],
+    "accessibility_binaries": [
+      "sethc.exe",
+      "utilman.exe",
+      "osk.exe",
+      "magnify.exe",
+      "displayswitch.exe",
+      "narrator.exe",
+      "atbroker.exe"
+    ],
+    "suspicious_commands": [
+      "-nop -exec bypass",
+      "-win hidden",
+      "-encodedcommand",
+      "atbroker.exe start"
+    ]
+  },
+  "process_trust": {
+    "description": "Score multiplier applied to any suspicious event caused by this process. Higher = less trusted = events are scored harder.",
+    "trusted_system": {
+      "multiplier": 0.3,
+      "reason": "Core Windows OS processes. Unlikely to be attacker-controlled. Events from these are low priority.",
+      "processes": [
+        "explorer.exe",
+        "svchost.exe",
+        "lsass.exe",
+        "services.exe",
+        "winlogon.exe",
+        "csrss.exe",
+        "smss.exe",
+        "wininit.exe",
+        "spoolsv.exe",
+        "taskhostw.exe",
+        "sihost.exe",
+        "fontdrvhost.exe",
+        "dwm.exe"
+      ]
+    },
+    "trusted_user_apps": {
+      "multiplier": 0.8,
+      "reason": "Common legitimate user applications. Suspicious events are noteworthy but not alarming on their own.",
+      "processes": [
+        "chrome.exe",
+        "msedge.exe",
+        "firefox.exe",
+        "brave.exe",
+        "outlook.exe",
+        "winword.exe",
+        "excel.exe",
+        "powerpnt.exe",
+        "code.exe",
+        "notepad.exe",
+        "teams.exe",
+        "onedrive.exe",
+        "slack.exe"
+      ]
+    },
+    "shell_interpreters": {
+      "multiplier": 1.8,
+      "reason": "Command-line shells and script interpreters. Frequently abused by attackers. Any suspicious event from these is high priority.",
+      "processes": [
+        "powershell.exe",
+        "pwsh.exe",
+        "cmd.exe",
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe",
+        "bash.exe",
+        "python.exe",
+        "python3.exe",
+        "node.exe"
+      ]
+    },
+    "lolbin_tools": {
+      "multiplier": 2.5,
+      "reason": "Living-off-the-land binaries. Legitimate system tools that are commonly hijacked to run attacker code.",
+      "processes": [
+        "regsvr32.exe",
+        "rundll32.exe",
+        "certutil.exe",
+        "bitsadmin.exe",
+        "msbuild.exe",
+        "installutil.exe",
+        "regasm.exe",
+        "regsvcs.exe",
+        "csc.exe",
+        "jsc.exe",
+        "vssadmin.exe",
+        "wmic.exe",
+        "msiexec.exe",
+        "sdclt.exe"
+      ]
+    },
+    "blacklisted": {
+      "multiplier": 5.0,
+      "reason": "Known malware names or tools that have no legitimate use on an end-user machine. Any event is an immediate critical alert.",
+      "processes": [
+        "mimikatz.exe",
+        "pwdump.exe",
+        "procdump.exe",
+        "psexec.exe",
+        "psexesvc.exe",
+        "cobalt strike",
+        "meterpreter",
+        "nc.exe",
+        "ncat.exe",
+        "netcat.exe",
+        "sharphound.exe",
+        "bloodhound.exe",
+        "rubeus.exe",
+        "lazagne.exe"
+      ]
+    }
+  }
+}

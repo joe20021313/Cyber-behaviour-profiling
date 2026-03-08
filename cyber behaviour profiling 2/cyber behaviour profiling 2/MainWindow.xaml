@@ -1,0 +1,38 @@
+﻿<ui:FluentWindow
+    x:Class="cyber_behaviour_profiling_2.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="My App" Height="600" Width="900">
+
+    <Grid>
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <ui:TitleBar Title="My App" Grid.Row="0" Grid.ColumnSpan="2" />
+
+    
+        <ui:NavigationView x:Name="NavView" Grid.Row="1" Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" PreviewMouseLeftButtonUp="NavView_PreviewMouseLeftButtonUp">
+            <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem Name="HomeItem" Content="Home" Tag="Home" />
+                <ui:NavigationViewItem Name="DashboardItem" Content="Dashboard" Tag="Dashboard" />
+                <ui:NavigationViewItem Name="SettingsItem" Content="Settings" Tag="Settings" />
+                <ui:NavigationViewItem Name="DetectionItem" Content="Detection" Tag="Detection" />
+            </ui:NavigationView.MenuItems>
+        </ui:NavigationView>
+
+   
+        <Grid Grid.Row="1" Grid.Column="1" Background="WhiteSmoke">
+           
+            <Frame x:Name="MainFrame" NavigationUIVisibility="Hidden" />
+        </Grid>
+    </Grid>
+
+</ui:FluentWindow>
