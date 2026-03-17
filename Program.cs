@@ -102,14 +102,24 @@ public partial class Program
             Console.WriteLine($"[Event ID {eventId}] {GetEventName(eventId)}");
 
             var dataNodes = doc.SelectNodes("
+            string destinationHostname = "";
+            int pid = 0;
             foreach (XmlNode node in dataNodes)
             {
                 string name = node.Attributes?["Name"]?.Value ?? "";
                 string value = node.InnerText;
+
+                if (name == "DestinationHostname") destinationHostname = value;
+                if (name == "ProcessId" && int.TryParse(value, out int parsedPid)) pid = parsedPid;
+
                 Console.WriteLine($"  {name}: {value}");
             }
             Console.WriteLine("---------------------------------------------------------");
 
+            if (eventId == 3 && !string.IsNullOrEmpty(destinationHostname))
+            {
+                MapToData.EvaluateNetworkConnection(pid, image, destinationHostname);
+            }
         }
         catch (Exception ex)
         {
@@ -168,19 +178,35 @@ public partial class Program
             dnsSession.EnableProvider("Microsoft-Windows-DNS-Client");
             dnsSession.Source.Dynamic.All += dnsData =>
             {
-                if (dnsData.EventName == "DNS_Query")
+
+                if (dnsData.EventName.Contains("Query", StringComparison.OrdinalIgnoreCase) || dnsData.EventName == "EventID(3008)")
                 {
-                    string queriedDomain = (string)dnsData.PayloadByName("QueryName");
-
-                    if (queriedDomain != null && MapToData._networkDomains.Contains(queriedDomain.ToLowerInvariant()))
+                    try
                     {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"[ALERT] Malicious domain requested: {queriedDomain} (PID: {dnsData.ProcessID})");
-                        Console.ResetColor();
-                        MapToData._recentDnsQueries[dnsData.ProcessID] = queriedDomain;
+                        string queriedDomain = "";
 
-                        MapToData.AddEventToProfile(dnsData.ProcessID, dnsData.ProcessName ?? "Unknown", "DNS_Query", queriedDomain, $"Requested domain: {queriedDomain}");
+                        if (Array.IndexOf(dnsData.PayloadNames, "QueryName") >= 0)
+                        {
+                            queriedDomain = ((string)dnsData.PayloadValue(dnsData.PayloadIndex("QueryName")))?.ToLowerInvariant();
+                        }
+
+                        if (!string.IsNullOrEmpty(queriedDomain))
+                        {
+                            MapToData._recentDnsQueries[dnsData.ProcessID] = queriedDomain;
+
+                            if (MapToData._networkDomains.Contains(queriedDomain))
+                            {
+
+                                Console.WriteLine($"Malicious domain requested: {queriedDomain} (PID: {dnsData.ProcessID})");
+                                Console.ResetColor();
+
+                                MapToData.AddEventToProfile(dnsData.ProcessID, dnsData.ProcessName ?? "Unknown", "DNS_Query", queriedDomain, $"Requested domain: {queriedDomain}");
+                            }
+                        }
                     }
+                    catch (Exception) {
+
+                     }
                 }
             };
 
@@ -361,16 +387,14 @@ public partial class Program
             {
                 if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
                 {
-                    MapToData._recentDnsQueries.TryGetValue(data.ProcessID, out string? domain);
-                    string destination = domain != null ? $"{domain} ({data.daddr})" : data.daddr?.ToString() ?? "?";
-
-                    string msg = $"NETWORK CONNECT - Process: {data.ProcessName} -> {destination}:{data.dport} Time:{data.TimeStamp}";
+                    string msg = $"[!] NETWORK CONNECT - Process: {data.ProcessName} -> {data.daddr}:{data.dport} Time:{data.TimeStamp}";
                     Console.WriteLine(msg);
                     Console.WriteLine("---------------------------------------------------------");
                     AddLogEntry(msg);
                     AddLogEntry("---------------------------------------------------------");
 
-                    MapToData.EvaluateNetworkConnection(data);
+                    string destIp = data.daddr?.ToString() ?? "";
+                    MapToData.EvaluateNetworkConnection(data.ProcessID, data.ProcessName ?? "", destIp);
                 }
             };
 
@@ -552,6 +576,9 @@ public static class MapToData
         _networkDomains = data.network?.suspicious_domains?.Select(d => d.ToLowerInvariant()).ToList() ?? new List<string>();
 
         _processes.Clear();
+    Console.WriteLine($"[DEBUG] Loaded {_filePaths.Count} file path rules");
+    Console.WriteLine($"[DEBUG] Loaded {_networkDomains.Count} domain rules: {string.Join(", ", _networkDomains.Take(5))}");
+
         var allProcesses = (data.processes?.lolbins ?? new List<string>())
             .Concat(data.processes?.accessibility_binaries ?? new List<string>());
         foreach (var proc in allProcesses)
@@ -612,40 +639,10 @@ public static class MapToData
     }
     public static void SaveToFile(string outputPath)
     {
-        var lines = new List<string>();
-        int a = 1;
-        foreach (var profile in ActiveProfiles.Values)
-        {
-            lines.Add($"  Process #{a}");
-            lines.Add($"  Process Name : {profile.ProcessName}");
-            lines.Add($"  Process ID   : {profile.ProcessId}");
-            lines.Add($"  First Seen   : {profile.FirstSeen:yyyy-MM-dd HH:mm:ss}");
-            lines.Add($"  Total Events : {profile.EventTimeline.Count}");
-            a++;
-
-            if (profile.EventTimeline.Count == 0)
-            {
-                lines.Add("  No suspicious events recorded.");
-            }
-            else
-            {
-                int i = 1;
-                foreach (var ev in profile.EventTimeline.OrderBy(e => e.Timestamp))
-                {
-                    lines.Add($"  Event #{i}");
-                    lines.Add($"  Timestamp        : {ev.Timestamp:yyyy-MM-dd HH:mm:ss.fff}");
-                    lines.Add($"   Event Type       : {ev.EventType}");
-                    lines.Add($"   Matched Indicator: {ev.MatchedIndicator}");
-                    lines.Add($"   Raw Data         : {ev.RawData}");
-                    lines.Add("===========================================================");
-                    i++;
-                }
-            }
-
-            File.WriteAllLines(outputPath, lines);
-            Console.WriteLine($"[+] Profile dump saved to: {outputPath}");
-
-        }
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        string json = JsonSerializer.Serialize(ActiveProfiles.Values, options);
+        File.WriteAllText(outputPath, json);
+        Console.WriteLine($"[+] Profile dump saved to: {outputPath}");
 
     }
     public static void AddEventToProfile(int pid, string processName, string eventType, string matchedRule, string rawData)
@@ -665,30 +662,27 @@ public static class MapToData
             RawData = rawData
         });
 
-        SaveToFile($"profile_{processName}_{pid}.txt");
+        SaveToFile($"profile_{processName}_{pid}.json");
 
     }
 
-    public static void EvaluateNetworkConnection(Microsoft.Diagnostics.Tracing.Parsers.Kernel.TcpIpConnectTraceData data)
+    public static void EvaluateNetworkConnection(int pid, string processName, string destinationIp)
     {
+        if (string.IsNullOrEmpty(destinationIp)) return;
 
-        if (data.daddr == null) return;
-        string destIp = data.daddr.ToString();
-        int destPort = data.dport;
-        string processName = data.ProcessName ?? "";
+        _recentDnsQueries.TryGetValue(pid, out string? knownDomain);
 
-        bool isSuspiciousProcess = processName.Equals("powershell", StringComparison.OrdinalIgnoreCase) ||
-                                  processName.Equals("certutil", StringComparison.OrdinalIgnoreCase);
+        string destination = knownDomain != null ? $"{knownDomain} ({destinationIp})" : destinationIp;
+        string lowerDest = destination.ToLowerInvariant();
 
-        _recentDnsQueries.TryGetValue(data.ProcessID, out string? knownDomain);
-        string destination = knownDomain != null ? $"{knownDomain} ({destIp})" : destIp;
+        string match = _networkDomains.FirstOrDefault(rule => lowerDest.Contains(rule));
 
-        if (isSuspiciousProcess || (isSuspiciousProcess && (destPort == 80 || destPort == 443)))
+        if (match != null)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Suspicious Domain from {processName} (PID: {data.ProcessID}) -> {destination}:{destPort}");
+            Console.WriteLine($"[ALERT] Suspicious Network Connection! {processName} (PID: {pid}) connected to {destination}");
             Console.ResetColor();
-            AddEventToProfile(data.ProcessID, processName, "NetworkConnect", destination, $"Connected to {destination}:{destPort}");
+            AddEventToProfile(pid, processName, "NetworkConnect", match, $"Connected to {destination}");
         }
     }
 }
