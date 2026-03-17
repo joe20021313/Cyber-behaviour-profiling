@@ -11,9 +11,8 @@ jobs:
     runs-on: self-hosted
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4 
 
-    # Create a directory to store all our logs
     - name: Create Logs Directory
       run: mkdir logs -Force
 
@@ -23,7 +22,7 @@ jobs:
         languages: csharp
     
     - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v4 
       with:
         dotnet-version: 10.0.x
 
@@ -47,7 +46,7 @@ jobs:
 
     - name: Upload Pipeline Logs
       if: always() 
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4 
       with:
         name: pipeline-run-logs
         path: |
