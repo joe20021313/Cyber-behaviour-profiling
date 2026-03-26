@@ -505,12 +505,20 @@ public class ProcessData
     public List<string> suspicious_commands { get; set; } = new List<string>();
 }
 
+public class PowerShellData
+{
+    public List<string> suspicious_keywords { get; set; } = new List<string>();
+}
+
 public class ThreatData
 {
     public FileOperationsData file_operations { get; set; } = new FileOperationsData();
     public RegistryData registry { get; set; } = new RegistryData();
     public NetworkData network { get; set; } = new NetworkData();
     public ProcessData processes { get; set; } = new ProcessData();
+
+    public PowerShellData powershell { get; set; } = new PowerShellData();
+
 }
 
 public static class MapToData
@@ -521,7 +529,7 @@ public static class MapToData
     private static List<int> _suspiciousPorts = new List<int>();
     private static HashSet<string> _suspiciousProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static List<string> _suspiciousCommands = new List<string>();
-
+    public static List<string> _powershellKeywords = new List<string>();
     public static ConcurrentDictionary<int, ProcessProfile> ActiveProfiles = new ConcurrentDictionary<int, ProcessProfile>();
 
     private static List<string> FormatList(List<string> input)
@@ -568,10 +576,10 @@ public static class MapToData
             _suspiciousCommands = data.processes.suspicious_commands?.Select(c => c.ToLowerInvariant()).ToList() ?? new List<string>();
         }
     }
-
     public static void EvaluateFileOperation(int pid, string processName, string filePath, string eventType)
     {
         string lowerPath = filePath.ToLowerInvariant();
+        string fileName  = Path.GetFileName(lowerPath);
         string match = null;
         string category = "FileOperation";
 

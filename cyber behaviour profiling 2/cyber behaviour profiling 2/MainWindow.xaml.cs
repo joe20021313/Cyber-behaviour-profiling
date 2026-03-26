@@ -17,7 +17,7 @@ namespace cyber_behaviour_profiling_2
         public MainWindow()
         {
             InitializeComponent();
-            MainFrame.Navigate(new Pages.DashboardPage());
+            MainFrame.Navigate(new Pages.DetectionPage());
         }
 
         private void NavView_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
@@ -35,17 +35,13 @@ namespace cyber_behaviour_profiling_2
                     switch (tag)
                     {
                         case "Dashboard":
-                            MainFrame.Navigate(new Pages.DashboardPage());
+                            MainFrame.Navigate(new Pages.DetectionPage());
+                            break;
+                        case "Rules":
+                            MainFrame.Navigate(new Pages.RulesPage());
                             break;
                         case "Settings":
                             MainFrame.Navigate(new Pages.SettingsPage());
-                            break;
-                        case "Detection":
-                            MainFrame.Navigate(new Pages.DetectionPage());
-                            break;
-                        case "Home":
-
-                            MainFrame.Navigate(new Pages.DashboardPage());
                             break;
                     }
                 }

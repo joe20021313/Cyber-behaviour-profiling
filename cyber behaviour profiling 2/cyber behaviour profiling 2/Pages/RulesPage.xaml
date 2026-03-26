@@ -1,0 +1,103 @@
+<Page x:Class="cyber_behaviour_profiling_2.Pages.RulesPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Title="Rules"
+      Background="{DynamicResource ApplicationBackgroundBrush}">
+
+    <Page.Resources>
+
+        <Style x:Key="SectionLabel" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+
+        <Style x:Key="TypeHeader" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+
+    </Page.Resources>
+
+    <Grid Margin="20,14,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="CUSTOM PATTERN RULES" Style="{StaticResource SectionLabel}"/>
+                <TextBlock Text="Rules run against raw event values. When a keyword matches, your message replaces the default tile label."
+                           FontSize="12" Margin="0,4,0,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="320"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- LEFT: Add rule form -->
+            <Border Grid.Column="0"
+                    CornerRadius="10"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    Padding="18,16"
+                    Margin="0,0,12,0"
+                    VerticalAlignment="Top">
+                <StackPanel>
+                    <TextBlock Text="ADD RULE" Style="{StaticResource SectionLabel}" Margin="0,0,0,14"/>
+
+                    <!-- Event type picker — coloured chips -->
+                    <TextBlock Text="Event type" FontSize="11"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Margin="0,0,0,6"/>
+                    <WrapPanel x:Name="TypeChips" Margin="0,0,0,14"/>
+
+                    <!-- Keyword -->
+                    <TextBlock Text="Keyword (case-insensitive)" FontSize="11"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Margin="0,0,0,4"/>
+                    <TextBox x:Name="RuleKeyword"
+                             Height="30" FontSize="12"
+                             VerticalContentAlignment="Center"
+                             Margin="0,0,0,12"/>
+
+                    <!-- Message -->
+                    <TextBlock Text="Message to display on match" FontSize="11"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Margin="0,0,0,4"/>
+                    <TextBox x:Name="RuleMessage"
+                             Height="30" FontSize="12"
+                             VerticalContentAlignment="Center"
+                             Margin="0,0,0,16"/>
+
+                    <ui:Button x:Name="AddRuleButton"
+                               Content="+ Add Rule"
+                               Appearance="Primary"
+                               HorizontalAlignment="Stretch"
+                               Click="AddRule_Click"/>
+                </StackPanel>
+            </Border>
+
+            <!-- RIGHT: Rules grouped by event type -->
+            <ScrollViewer Grid.Column="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="RulesGroupPanel"/>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

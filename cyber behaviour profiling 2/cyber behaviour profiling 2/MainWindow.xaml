@@ -21,10 +21,9 @@
     
         <ui:NavigationView x:Name="NavView" Grid.Row="1" Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" PreviewMouseLeftButtonUp="NavView_PreviewMouseLeftButtonUp">
             <ui:NavigationView.MenuItems>
-                <ui:NavigationViewItem Name="HomeItem" Content="Home" Tag="Home" />
                 <ui:NavigationViewItem Name="DashboardItem" Content="Dashboard" Tag="Dashboard" />
-                <ui:NavigationViewItem Name="SettingsItem" Content="Settings" Tag="Settings" />
-                <ui:NavigationViewItem Name="DetectionItem" Content="Detection" Tag="Detection" />
+                <ui:NavigationViewItem Name="RulesItem"     Content="Rules"     Tag="Rules"     />
+                <ui:NavigationViewItem Name="SettingsItem"  Content="Settings"  Tag="Settings"  />
             </ui:NavigationView.MenuItems>
         </ui:NavigationView>
 

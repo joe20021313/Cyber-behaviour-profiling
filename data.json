@@ -1,32 +1,103 @@
-﻿{
+{
   "file_operations": {
-    "suspicious_reads": [
-      "\\google\\chrome\\user data\\default\\cookies",
-      "\\google\\chrome\\user data\\default\\network\\cookies",
-      "\\microsoft\\edge\\user data\\default\\cookies",
-      "\\microsoft\\edge\\user data\\default\\network\\cookies",
+    "sensitive_directories": [
+      "\\google\\chrome\\user data\\",
+      "\\microsoft\\edge\\user data\\",
       "\\mozilla\\firefox\\profiles\\",
-      "\\appdata\\local\\brave\\user data\\default\\cookies",
-      "\\google\\chrome\\user data\\default\\login data",
-      "\\google\\chrome\\user data\\default\\login data for account",
-      "\\microsoft\\edge\\user data\\default\\login data",
-      "\\mozilla\\firefox\\profiles\\logins.json",
-      "\\mozilla\\firefox\\profiles\\key4.db",
-      "\\brave\\user data\\default\\login data",
-      "\\opera software\\opera stable\\login data",
+      "\\brave\\user data\\",
+      "\\opera software\\opera stable\\",
+      "\\yandex\\yandexbrowser\\user data\\",
+      "\\vivaldi\\user data\\",
       "\\microsoft\\credentials\\",
       "\\microsoft\\protect\\",
-      "\\microsoft\\vault\\"
+      "\\microsoft\\vault\\",
+      "\\appdata\\local\\packages\\",
+      "\\filezilla\\",
+      "\\winscp\\",
+      "\\mremoteng\\",
+      "\\.ssh\\",
+      "\\openssh\\",
+      "\\putty\\",
+      "\\.aws\\",
+      "\\amazon\\aws\\",
+      "\\keepass\\",
+      "\\keepass2\\",
+      "\\microsoft\\windows nt\\winlogon\\",
+      "\\thunderbird\\profiles\\",
+      "\\microsoft\\windows\\recent\\",
+      "\\windows\\system32\\config\\",
+      "\\windows\\ntds\\",
+      "\\microsoft\\windows\\start menu\\programs\\startup\\",
+      "\\roaming\\microsoft\\windows\\start menu\\programs\\startup\\"
+    ],
+    "sensitive_files": [
+      "vaultcli.dll",
+      "cookies",
+      "login data",
+      "logins.json",
+      "key4.db",
+      "cert9.db",
+      "places.sqlite",
+      "web data",
+      "local state",
+      "network\\cookies",
+      "login data for account",
+      "wallet.dat",
+      "electrum.dat",
+      "recentservers.xml",
+      "sitemanager.xml",
+      "filezilla.xml",
+      "winscp.ini",
+      "confcons.xml",
+      "confcrypt.cfg",
+      "default.rdp",
+      "id_rsa",
+      "id_ed25519",
+      "id_ecdsa",
+      "id_dsa",
+      "authorized_keys",
+      "known_hosts",
+      "credentials",
+      "ntds.dit",
+      "sam",
+      "security",
+      "system.hive",
+      "kdbx",
+      "kdbe",
+      "keepass.ini",
+      "pass.txt",
+      "passwords.txt",
+      "creds.txt",
+      "credential.txt",
+      "logins.txt",
+      ".bash_history",
+      ".zsh_history",
+      "unattend.xml",
+      "sysprep.xml",
+      "sysprep.inf",
+      "vnc.ini",
+      "ultravnc.ini",
+      "wce_export.txt",
+      "lsass.dmp",
+      "lsass.exe.dmp"
     ],
     "uncommon_writes": [
       "c:\\perflogs\\",
       "c:\\$recycle.bin\\",
-      "c:\\intel\\logs\\",
-      "c:\\users\\default\\",
       "c:\\users\\public\\",
       "c:\\windows\\fonts\\",
+      "c:\\windows\\system32\\drivers\\etc\\hosts",
+      "c:\\windows\\system32\\tasks\\",
+      "c:\\windows\\syswow64\\",
+      "c:\\programdata\\microsoft\\windows\\start menu\\programs\\startup\\",
       "c:\\windows\\debug\\",
-      "\\appdata\\local\\temp\\"
+      "c:\\windows\\tracing\\"
+    ],
+    "context_signals": [
+      "\\appdata\\local\\temp\\",
+      "\\windows\\temp\\",
+      "c:\\programdata\\",
+      "c:\\users\\public\\"
     ],
     "suspicious_overwrites": [
       "sethc.exe",
@@ -115,7 +186,21 @@
       "-nop -exec bypass",
       "-win hidden",
       "-encodedcommand",
-      "atbroker.exe start"
+      "atbroker.exe start",
+      "cmd /c del",
+      "cmd.exe /c del",
+      "cmd /c rd /s /q",
+      "cmd /c rmdir",
+      "cmd /c timeout /t",
+      "ping localhost -n",
+      "ping 127.0.0.1 -n",
+      "choice /c y /n /d y /t",
+      "remove-item",
+      "start /min cmd",
+      "cmd /c start /min",
+      "cmd /c copy",
+      "cmd /c move",
+      "cmd /c xcopy"
     ]
   },
   "process_trust": {
@@ -155,7 +240,22 @@
         "notepad.exe",
         "teams.exe",
         "onedrive.exe",
-        "slack.exe"
+        "slack.exe",
+        "acrobat.exe",
+        "acrord32.exe",
+        "photoshop.exe",
+        "illustrator.exe",
+        "adobeupdateservice.exe",
+        "googledrive.exe",
+        "googledrivesync.exe",
+        "steam.exe",
+        "steamwebhelper.exe",
+        "discord.exe",
+        "spotify.exe",
+        "7zfm.exe",
+        "winrar.exe",
+        "zoom.exe",
+        "dropbox.exe"
       ]
     },
     "shell_interpreters": {
@@ -214,5 +314,126 @@
         "lazagne.exe"
       ]
     }
+  },
+  "discovery_commands": [
+    "whoami.exe",
+    "systeminfo.exe",
+    "ipconfig.exe",
+    "net.exe",
+    "net1.exe",
+    "tasklist.exe",
+    "hostname.exe",
+    "nltest.exe",
+    "nslookup.exe",
+    "arp.exe",
+    "route.exe",
+    "netstat.exe",
+    "qprocess.exe",
+    "query.exe",
+    "wmic.exe"
+  ],
+  "tactic_weights": {
+    "CredentialAccess":    20,
+    "Persistence":         18,
+    "DefenseEvasion":      16,
+    "Execution":           12,
+    "PrivilegeEscalation": 15,
+    "Discovery":            5,
+    "LateralMovement":     14,
+    "Collection":          10,
+    "CommandAndControl":   18,
+    "Exfiltration":        25,
+    "Impact":              22
+  },
+  "kill_chains": [
+    {
+      "name": "Credential Theft → Exfiltration",
+      "sequence": ["CredentialAccess", "CommandAndControl"],
+      "bonus": 40,
+      "description": "Process read credentials then connected to a suspicious endpoint"
+    },
+    {
+      "name": "Persistence + Defense Evasion",
+      "sequence": ["Persistence", "DefenseEvasion"],
+      "bonus": 30,
+      "description": "Process set up persistence and then tried to disable defenses"
+    },
+    {
+      "name": "Recon → Harvest",
+      "sequence": ["Execution", "Discovery", "Collection"],
+      "bonus": 35,
+      "description": "Spawned tools, surveyed the system, then started collecting data"
+    }
+  ],
+  "indicator_classification": {
+    "hard_indicators": [
+      "credential_file_access",
+      "dpapi_decrypt",
+      "network_c2",
+      "dns_c2",
+      "process_blacklisted",
+      "registry_defense_evasion",
+      "registry_credential_access",
+      "file_persistence"
+    ],
+    "soft_indicators": [
+      "file_defense_evasion",
+      "context_signal",
+      "registry_persistence",
+      "collection",
+      "process_discovery",
+      "process_lolbin",
+      "registry_privilege_escalation"
+    ]
+  },
+  "area_weights": {
+    "high_value": ["WindowsCredentialStore", "BrowserCredentials", "ThirdPartyCredentials", "DPAPIDecryption"],
+    "medium_value": ["DefenseTools"],
+    "low_value": ["PersistenceMechanisms", "UnusualWriteLocations", "NetworkCommunication", "ProcessExecution"]
+  },
+  "confirmation_chains": [
+    {
+      "name": "Credential Theft + Exfiltration",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": ["CommandAndControl"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Credential + DPAPI",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": [],
+      "corroborating_events": ["DPAPI_Decrypt"]
+    },
+    {
+      "name": "Persistence + Defense Evasion",
+      "required_tactics": ["Persistence"],
+      "corroborating_tactics": ["DefenseEvasion"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Collection + Exfiltration",
+      "required_tactics": ["Collection"],
+      "corroborating_tactics": ["CommandAndControl"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Multi-Source Credential Harvesting",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": [],
+      "corroborating_events": ["SensitiveDirAccess"]
+    }
+  ],
+  "scoring": {
+    "low_threshold": 15,
+    "medium_threshold": 35,
+    "review_threshold": 40,
+    "high_threshold": 60,
+    "critical_threshold": 85,
+    "velocity_window_seconds": 5,
+    "velocity_event_threshold": 5,
+    "velocity_bonus": 30,
+    "breadth_bonus_2": 10,
+    "breadth_bonus_3plus": 25,
+    "tactic_diversity_bonus_per_tactic": 8
   }
 }

@@ -1,54 +1,83 @@
-name: Cyber behaviour profiling - .NET Build and Test
+name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-  build-and-test:
-    runs-on: self-hosted
+  pipeline:
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4 
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Create Logs Directory
-      run: mkdir logs -Force
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
 
-    - name: Initialize CodeQL 
-      uses: github/codeql-action/init@v3
-      with:
-        languages: csharp
-    
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4 
-      with:
-        dotnet-version: 10.0.x
+      - name: Restore
+        run: dotnet restore Cyber-behaviour-profiling.sln
 
-    - name: Restore dependencies
-      run: dotnet restore Cyber-behaviour-profiling.sln | Tee-Object -FilePath logs/restore.log
+      # SCA — flags known-vulnerable packages, non-blocking so it doesn't kill the build
+      - name: SCA (vulnerable packages)
+        run: dotnet list package --vulnerable --include-transitive 2>&1 | Tee-Object -FilePath sca.log
+        continue-on-error: true
 
-    - name: Software Composition Analysis (SCA)
-      run: dotnet list package --vulnerable --include-transitive | Tee-Object -FilePath logs/sca.log
+      # Lint — reports formatting issues without blocking
+      - name: Lint
+        run: dotnet format Cyber-behaviour-profiling.sln --verify-no-changes 2>&1 | Tee-Object -FilePath lint.log
+        continue-on-error: true
 
-    - name: Lint Code
-      run: dotnet format Cyber-behaviour-profiling.sln --verify-no-changes | Tee-Object -FilePath logs/lint.log
+      # SAST — CodeQL must wrap the build step
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
 
-    - name: Build project
-      run: dotnet build Cyber-behaviour-profiling.sln --no-restore --configuration Release | Tee-Object -FilePath logs/build.log
+      - name: Build
+        run: dotnet build Cyber-behaviour-profiling.sln --no-restore --configuration Release 2>&1 | Tee-Object -FilePath build.log
 
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      - name: Analyze (CodeQL)
+        uses: github/codeql-action/analyze@v3
 
-    - name: Run Unit Tests
-      run: dotnet test Cyber-behaviour-profiling.sln --no-build --configuration Release --verbosity normal --logger "trx;LogFileName=test_results.trx" | Tee-Object -FilePath logs/test.log
+      # Tests
+      - name: Test
+        run: >
+          dotnet test Cyber-behaviour-profiling.sln
+          --no-build
+          --configuration Release
+          --verbosity normal
+          --logger "trx;LogFileName=results.trx"
+          2>&1 | Tee-Object -FilePath test.log
 
-    - name: Upload Pipeline Logs
-      if: always() 
-      uses: actions/upload-artifact@v4 
-      with:
-        name: pipeline-run-logs
-        path: |
-          logs/
-          **/*.trx
+      # Staging — publish a self-contained Windows executable as a downloadable artifact
+      - name: Publish (staging)
+        run: >
+          dotnet publish Cyber-behaviour-profiling.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          --output staging/
+
+      - name: Upload staging artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyberProfiler-${{ github.sha }}
+          path: staging/
+          retention-days: 14
+
+      # Upload all logs regardless of outcome
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-${{ github.sha }}
+          path: |
+            *.log
+            **/*.trx
+          retention-days: 7

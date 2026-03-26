@@ -4,38 +4,76 @@ using Microsoft.Diagnostics.Tracing.Session;
 using System.Collections.Generic;
 using System.Diagnostics.Eventing.Reader;
 using System.Xml;
-using Microsoft.Diagnostics.Tracing.Parsers.IIS_Trace;
 using System.Diagnostics;
 using System.Threading;
 using System.IO;
 using System.Collections.Concurrent;
-
 using System.Text.Json;
+using Cyber_behaviour_profiling;
+
 public partial class Program
 {
-    Dictionary<string, string> ageMap = new Dictionary<string, string>();
     private static List<string> logEntries = new List<string>();
     private static object logLock = new object();
 
     public static void Main(string[] args)
-
     {
-        logEntries.Add("Activity Log - " + DateTime.Now);
-        Console.WriteLine("Enter process name to monitor");
+        logEntries.Add("Activity Log " + DateTime.Now);
+        Console.Write("process name: ");
         string targetProcess = Console.ReadLine()?.ToLower() ?? "";
 
         if (string.IsNullOrWhiteSpace(targetProcess))
         {
-            Console.WriteLine("No process name provided. Exiting.");
+            Console.WriteLine("no process specified");
             return;
         }
 
         Console.CancelKeyPress += (sender, e) =>
         {
             e.Cancel = true;
-            Console.WriteLine("\nSaving logs to file...");
-            SaveAllLogsToFile("activity_log.txt");
-            Console.WriteLine("Logs saved. Exiting.");
+            SaveAllLogsToFile("log.txt");
+            MapToData.SaveToFile("profiles.json");
+
+            Console.WriteLine("\n-- session report --\n");
+
+            var mergedProfiles = MapToData.ActiveProfiles.Values
+                .GroupBy(p => p.ProcessName?.ToLowerInvariant() ?? "")
+                .Select(g =>
+                {
+                    var primary = g.OrderByDescending(p => p.EventTimeline.Count).First();
+                    if (g.Count() == 1) return primary;
+
+                    var merged = new ProcessProfile
+                    {
+                        ProcessId   = primary.ProcessId,
+                        ProcessName = primary.ProcessName,
+                        FirstSeen   = g.Min(p => p.FirstSeen),
+                    };
+                    foreach (var p in g)
+                    {
+                        foreach (var ev in p.EventTimeline)
+                            merged.EventTimeline.Add(ev);
+                        foreach (var path in p.ExeDropPaths)
+                            merged.ExeDropPaths.Add(path);
+                        foreach (var path in p.DeletedPaths)
+                            merged.DeletedPaths.Add(path);
+                        foreach (var cmd in p.SpawnedCommandLines)
+                            merged.SpawnedCommandLines.Add(cmd);
+                        foreach (var kvp in p.WriteDirectories)
+                            merged.WriteDirectories.AddOrUpdate(kvp.Key, kvp.Value, (_, c) => c + kvp.Value);
+                        Interlocked.Add(ref merged.TotalFileWrites, p.TotalFileWrites);
+                        Interlocked.Add(ref merged.TotalFileDeletes, p.TotalFileDeletes);
+                    }
+                    return merged;
+                })
+                .OrderByDescending(p => p.EventTimeline.Count);
+
+            foreach (var profile in mergedProfiles)
+            {
+                var finalReport = BehaviorAnalyzer.Analyze(profile);
+                var narrative   = AttackNarrator.BuildNarrative(profile, finalReport);
+                AttackNarrator.PrintNarrative(narrative);
+            }
             Environment.Exit(0);
         };
 
@@ -43,42 +81,24 @@ public partial class Program
         workerThread.Start();
         Thread workerThread1 = new Thread(new ThreadStart(() => MonitorProcess(targetProcess)));
         workerThread1.Start();
-
     }
 
     public static void MonitorSysmon(string targetProcess)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
-            return;
-        }
-
         string query = "*[System]";
         var eventLogQuery = new EventLogQuery("Microsoft-Windows-Sysmon/Operational", PathType.LogName, query);
         using (var watcher = new EventLogWatcher(eventLogQuery))
         {
-            Console.WriteLine($"Monitoring '{targetProcess}' for file activity via Sysmon...");
+            Console.WriteLine($"sysmon: {targetProcess}");
 
             watcher.EventRecordWritten += (sender, e) =>
             {
-                if (!OperatingSystem.IsWindows())
-                {
-                    Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
-                    return;
-                }
                 if (e.EventRecord != null)
-                {
                     ProcessSysmonEvent(e.EventRecord, targetProcess);
-                }
             };
 
             watcher.Enabled = true;
-
-            while (true)
-            {
-                Thread.Sleep(1000);
-            }
+            while (true) Thread.Sleep(1000);
         }
     }
 
@@ -96,10 +116,7 @@ public partial class Program
 
             var imageNode = doc.SelectSingleNode("
             string image = imageNode?.InnerText?.ToLower() ?? "";
-
             if (!image.Contains(targetProcess)) return;
-
-            Console.WriteLine($"[Event ID {eventId}] {GetEventName(eventId)}");
 
             var dataNodes = doc.SelectNodes("
             string destinationHostname = "";
@@ -108,37 +125,31 @@ public partial class Program
             {
                 string name = node.Attributes?["Name"]?.Value ?? "";
                 string value = node.InnerText;
-
                 if (name == "DestinationHostname") destinationHostname = value;
                 if (name == "ProcessId" && int.TryParse(value, out int parsedPid)) pid = parsedPid;
-
-                Console.WriteLine($"  {name}: {value}");
             }
-            Console.WriteLine("---------------------------------------------------------");
 
             if (eventId == 3 && !string.IsNullOrEmpty(destinationHostname))
             {
+                AddLogEntry($"Sysmon Network | {image} | PID: {pid} | Dest: {destinationHostname}");
                 MapToData.EvaluateNetworkConnection(pid, image, destinationHostname);
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error processing Sysmon event: {ex.Message}");
+            Console.WriteLine($"sysmon error: {ex.Message}");
         }
     }
 
-    static string GetEventName(int eventId)
+    static string GetEventName(int eventId) => eventId switch
     {
-        return eventId switch
-        {
-            1 => "ProcessCreate",
-            3 => "NetworkConnect",
-            10 => "ProcessAccess",
-            11 => "FileCreate",
-            23 => "FileDelete",
-            _ => $"Event {eventId}"
-        };
-    }
+        1  => "ProcessCreate",
+        3  => "NetworkConnect",
+        10 => "ProcessAccess",
+        11 => "FileCreate",
+        23 => "FileDelete",
+        _  => $"Event {eventId}"
+    };
 
     public static void MonitorProcess(string targetProcess)
     {
@@ -151,538 +162,739 @@ public partial class Program
         bool ShouldMonitor(string processName, uint pid) =>
             processName?.ToLower().Contains(targetProcess) == true || monitoredPids.Contains(pid);
 
-        using (var userSession = new TraceEventSession("DPAPIMonitorSession"))
-        using (var dnsSession = new TraceEventSession("DNSMonitorSession"))
-        using (var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName))
+        using var userSession = new TraceEventSession("DPAPIMonitorSession");
+        using var dnsSession  = new TraceEventSession("DNSMonitorSession");
+        using var session     = new TraceEventSession(KernelTraceEventParser.KernelSessionName);
+
+        userSession.EnableProvider(
+            new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"),
+            Microsoft.Diagnostics.Tracing.TraceEventLevel.Verbose);
+
+        userSession.Source.Dynamic.All += data =>
         {
-            userSession.EnableProvider(
-               new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"),
-               Microsoft.Diagnostics.Tracing.TraceEventLevel.Verbose
-           );
-
-            userSession.Source.Dynamic.All += data =>
+            if (data.ProviderGuid == new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"))
             {
-                if (data.ProviderGuid == new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"))
+                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
                 {
-                    if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                    {
-                        string msg = $"[!] DPAPI DECRYPT - Process: {data.ProcessName} PID:{data.ProcessID} Event:{data.EventName} Time:{data.TimeStamp}";
-                        Console.WriteLine(msg);
-                        Console.WriteLine("---------------------------------------------------------");
-                        AddLogEntry(msg);
-                        AddLogEntry("---------------------------------------------------------");
-                    }
+                    AddLogEntry($"[DPAPI] {data.ProcessName} PID:{data.ProcessID} Event:{data.EventName}");
+
+                    MapToData.AddEventToProfile(
+                        data.ProcessID, data.ProcessName ?? "Unknown",
+                        "DPAPI_Decrypt", "dpapi_decrypt", data.EventName ?? "", "dpapi_decrypt");
                 }
-            };
+            }
+        };
 
-            dnsSession.EnableProvider("Microsoft-Windows-DNS-Client");
-            dnsSession.Source.Dynamic.All += dnsData =>
+        dnsSession.EnableProvider("Microsoft-Windows-DNS-Client");
+        dnsSession.Source.Dynamic.All += dnsData =>
+        {
+            if (dnsData.EventName.Contains("Query", StringComparison.OrdinalIgnoreCase)
+                || dnsData.EventName == "EventID(3008)")
             {
-
-                if (dnsData.EventName.Contains("Query", StringComparison.OrdinalIgnoreCase) || dnsData.EventName == "EventID(3008)")
+                try
                 {
-                    try
+                    string queriedDomain = "";
+                    if (Array.IndexOf(dnsData.PayloadNames, "QueryName") >= 0)
+                        queriedDomain = ((string)dnsData.PayloadValue(
+                            dnsData.PayloadIndex("QueryName")))?.ToLowerInvariant() ?? "";
+
+                    if (!string.IsNullOrEmpty(queriedDomain))
                     {
-                        string queriedDomain = "";
+                        MapToData._recentDnsQueries[dnsData.ProcessID] = queriedDomain;
 
-                        if (Array.IndexOf(dnsData.PayloadNames, "QueryName") >= 0)
+                        if (MapToData._networkDomains.Contains(queriedDomain))
                         {
-                            queriedDomain = ((string)dnsData.PayloadValue(dnsData.PayloadIndex("QueryName")))?.ToLowerInvariant();
-                        }
-
-                        if (!string.IsNullOrEmpty(queriedDomain))
-                        {
-                            MapToData._recentDnsQueries[dnsData.ProcessID] = queriedDomain;
-
-                            if (MapToData._networkDomains.Contains(queriedDomain))
-                            {
-
-                                Console.WriteLine($"Malicious domain requested: {queriedDomain} (PID: {dnsData.ProcessID})");
-                                Console.ResetColor();
-
-                                MapToData.AddEventToProfile(dnsData.ProcessID, dnsData.ProcessName ?? "Unknown", "DNS_Query", queriedDomain, $"Requested domain: {queriedDomain}");
-                            }
+                            MapToData.AddEventToProfile(
+                                dnsData.ProcessID, dnsData.ProcessName ?? "Unknown",
+                                "DNS_Query", queriedDomain,
+                                queriedDomain, "dns_c2");
                         }
                     }
-                    catch (Exception) {
-
-                     }
                 }
-            };
+                catch { }
+            }
+        };
 
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                session.Stop();
-                userSession.Stop();
-                dnsSession.Stop();
-            };
-
-            session.EnableKernelProvider(
-                KernelTraceEventParser.Keywords.FileIO |
-                KernelTraceEventParser.Keywords.Process |
-                KernelTraceEventParser.Keywords.FileIOInit |
-                KernelTraceEventParser.Keywords.Registry |
-                KernelTraceEventParser.Keywords.DiskFileIO |
-                KernelTraceEventParser.Keywords.NetworkTCPIP
-            );
-
-            Console.WriteLine($"Monitoring '{targetProcess}' for file activity...");
-            Console.WriteLine("Press Ctrl+C to stop.");
-            Console.WriteLine("---------------------------------------------------------");
-
-            session.Source.Kernel.ProcessStart += data =>
-            {
-                if (monitoredPids.Contains((uint)data.ParentID))
-                {
-                    monitoredPids.Add((uint)data.ProcessID);
-
-                    Console.WriteLine($" PROCESS SPAWNED");
-                    Console.WriteLine($"   Parent Process: {targetProcess}");
-                    Console.WriteLine($"   New Process: {data.ImageFileName}");
-                    Console.WriteLine($"   Command Line: {data.CommandLine}");
-                    Console.WriteLine($"   Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($" PROCESS SPAWNED");
-                    AddLogEntry($"   Parent Process: {targetProcess}");
-                    AddLogEntry($"   New Process: {data.ImageFileName}");
-                    AddLogEntry($"   Command Line: {data.CommandLine}");
-                    AddLogEntry($"   Time: {data.TimeStamp}");
-
-                    MapToData.EvaluateProcessSpawn(data.ParentID, targetProcess, data.ProcessID, data.ProcessName ?? "", data.CommandLine ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistryCreate += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry create");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry create");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistryOpen += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry open");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry open");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistrySetValue += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry change");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry change");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.FileIOWrite += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: File write");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"        Size: {data.IoSize} bytes");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File write");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        File: {data.FileName}");
-                    AddLogEntry($"        Size: {data.IoSize} bytes");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileWrite");
-                }
-            };
-
-            session.Source.Kernel.FileIOCreate += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    if (string.IsNullOrEmpty(data.FileName)) return;
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileOpen");
-
-                    Console.WriteLine($"Type: File Open");
-                    Console.WriteLine($"[READ] Process: {data.ProcessName}");
-                    Console.WriteLine($"       ID: {data.ProcessID}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"       Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File Open");
-                    AddLogEntry($"[READ] Process: {data.ProcessName}");
-                    AddLogEntry($"       ID: {data.ProcessID}");
-                    AddLogEntry($"       File: {data.FileName}");
-                    AddLogEntry($"       Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-                }
-            };
-
-            session.Source.Kernel.FileIORead += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    if (string.IsNullOrEmpty(data.FileName)) return;
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileRead");
-
-                    Console.WriteLine($"Type: File read");
-                    Console.WriteLine($"[READ] Process: {data.ProcessName}");
-                    Console.WriteLine($"       ID: {data.ProcessID}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"       Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File read");
-                    AddLogEntry($"[READ] Process: {data.ProcessName}");
-                    AddLogEntry($"       ID: {data.ProcessID}");
-                    AddLogEntry($"       File: {data.FileName}");
-                    AddLogEntry($"       Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-                }
-            };
-
-            session.Source.Kernel.TcpIpConnect += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    string msg = $"[!] NETWORK CONNECT - Process: {data.ProcessName} -> {data.daddr}:{data.dport} Time:{data.TimeStamp}";
-                    Console.WriteLine(msg);
-                    Console.WriteLine("---------------------------------------------------------");
-                    AddLogEntry(msg);
-                    AddLogEntry("---------------------------------------------------------");
-
-                    string destIp = data.daddr?.ToString() ?? "";
-                    MapToData.EvaluateNetworkConnection(data.ProcessID, data.ProcessName ?? "", destIp);
-                }
-            };
-
-            Thread dpapiThread = new Thread(() => userSession.Source.Process());
-            dpapiThread.IsBackground = true;
-            dpapiThread.Start();
-
-            Thread dnsThread = new Thread(() => dnsSession.Source.Process());
-            dnsThread.IsBackground = true;
-            dnsThread.Start();
-
-            session.Source.Process();
-        }
-    }
-
-    static void readPowerShellCommands()
-    {
-
-    }
-
-    static void dnsQuery()
-    {
-
-    }
-    public static void UACBypassRegistryKeys()
-    {
-
-    }
-
-    static void enableFirewallMonitoring()
-    {
-        try
+        Console.CancelKeyPress += (sender, e) =>
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "auditpol.exe",
-                Arguments = "/set /subcategory:\"Filtering Platform Policy Change\" /success:enable /failure:enable",
-                Verb = "runas",
-                CreateNoWindow = true,
-                UseShellExecute = true
-            };
-            using var proc = Process.Start(psi);
-            proc.WaitForExit();
-            if (proc.ExitCode == 0)
-                Console.WriteLine("Firewall auditing policy enabled.");
-            else
-                Console.WriteLine("Failed to enable firewall auditing policy. Exit code: " + proc.ExitCode);
-            Environment.Exit(1);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error enabling firewall auditing: " + ex.Message);
-            Environment.Exit(1);
-        }
+            session.Stop();
+            userSession.Stop();
+            dnsSession.Stop();
+        };
 
+        session.EnableKernelProvider(
+            KernelTraceEventParser.Keywords.FileIO     |
+            KernelTraceEventParser.Keywords.Process    |
+            KernelTraceEventParser.Keywords.FileIOInit |
+            KernelTraceEventParser.Keywords.Registry   |
+            KernelTraceEventParser.Keywords.DiskFileIO |
+            KernelTraceEventParser.Keywords.NetworkTCPIP);
+
+        Console.WriteLine($"etw: monitoring {targetProcess}");
+
+        session.Source.Kernel.FileIOWrite += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                AddLogEntry($"FileWrite | {data.ProcessName} | {data.FileName} | {data.IoSize}b");
+                MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileWrite");
+            }
+        };
+
+        session.Source.Kernel.FileIOCreate += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                if (string.IsNullOrEmpty(data.FileName)) return;
+                MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileOpen");
+                ConsoleSummarizer.TrackFileAccess(data.ProcessID, data.ProcessName, data.FileName, "Open");
+            }
+        };
+
+        session.Source.Kernel.FileIORead += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                if (string.IsNullOrEmpty(data.FileName)) return;
+                MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileRead");
+                ConsoleSummarizer.TrackFileAccess(data.ProcessID, data.ProcessName, data.FileName, "Read");
+            }
+        };
+
+        session.Source.Kernel.FileIODelete += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                AddLogEntry($"FileDelete | {data.ProcessName} | {data.FileName}");
+                MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileDelete");
+            }
+        };
+
+        session.Source.Kernel.FileIORename += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                AddLogEntry($"FileRename | {data.ProcessName} | {data.FileName}");
+                MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileRename");
+            }
+        };
+
+        session.Source.Kernel.RegistryCreate += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "Create");
+                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Create");
+            }
+        };
+
+        session.Source.Kernel.RegistryOpen += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "Open");
+                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Open");
+            }
+        };
+
+        session.Source.Kernel.RegistrySetValue += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "SetValue");
+                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Write");
+            }
+        };
+
+        session.Source.Kernel.TcpIpConnect += data =>
+        {
+            if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+            {
+                string msg = $"[NET] {data.ProcessName} → {data.daddr}:{data.dport}";
+                AddLogEntry(msg);
+                MapToData.EvaluateNetworkConnection(data.ProcessID, data.ProcessName ?? "", data.daddr?.ToString() ?? "");
+            }
+        };
+
+        session.Source.Kernel.ProcessStart += data =>
+        {
+            if (monitoredPids.Contains((uint)data.ParentID))
+            {
+                monitoredPids.Add((uint)data.ProcessID);
+                AddLogEntry($"SPAWN: {targetProcess} -> {data.ImageFileName} [{data.CommandLine}]");
+                MapToData.EvaluateProcessSpawn(data.ParentID, targetProcess, data.ProcessID, data.ProcessName ?? "", data.CommandLine ?? "");
+            }
+        };
+
+        Thread dpapiThread = new Thread(() => userSession.Source.Process()) { IsBackground = true };
+        dpapiThread.Start();
+
+        Thread dnsThread = new Thread(() => dnsSession.Source.Process()) { IsBackground = true };
+        dnsThread.Start();
+
+        session.Source.Process();
     }
 
     private static void AddLogEntry(string entry)
     {
-        lock (logLock)
-        {
-            logEntries.Add(entry);
-        }
+        lock (logLock) { logEntries.Add(entry); }
     }
 
     private static void SaveAllLogsToFile(string fileName)
     {
         lock (logLock)
         {
-            if (logEntries.Count == 0)
-            {
-                Console.WriteLine("No log entries to save.");
-                return;
-            }
-
-            string docPath = Directory.GetCurrentDirectory();
-            string logPath = Path.Combine(docPath, fileName);
-
+            if (logEntries.Count == 0) { Console.WriteLine("no log entries"); return; }
+            string logPath = Path.Combine(Directory.GetCurrentDirectory(), fileName);
             try
             {
                 File.WriteAllLines(logPath, logEntries);
-                Console.WriteLine($"Saved {logEntries.Count} log entries to: {logPath}");
+                Console.WriteLine($"saved {logEntries.Count} entries to {logPath}");
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error saving logs: {ex.Message}");
-            }
+            catch (Exception ex) { Console.WriteLine($"{ex.Message}"); }
         }
     }
+}
 
+public class MappedRule
+{
+    public string Pattern  { get; set; } = "";
+    public string Category { get; set; } = "";
 }
 
 public class SuspiciousEvent
 {
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; }
-    public string MatchedIndicator { get; set; }
-    public string RawData { get; set; }
+    public DateTime Timestamp        { get; set; }
+    public DateTime LastSeen         { get; set; }
+    public string   Tactic           { get; set; }
+    public string   TechniqueId      { get; set; }
+    public string   TechniqueName    { get; set; }
+    public string   EventType        { get; set; }
+    public string   MatchedIndicator { get; set; }
+    public string   RawData          { get; set; }
+    public int      AttemptCount     { get; set; } = 1;
 }
 
 public class ProcessProfile
 {
-    public int ProcessId { get; set; }
-    public string ProcessName { get; set; }
-    public DateTime FirstSeen { get; set; }
-
-    public ConcurrentBag<SuspiciousEvent> EventTimeline { get; set; } = new ConcurrentBag<SuspiciousEvent>();
-
+    public int      ProcessId              { get; set; }
+    public string   ProcessName            { get; set; }
+    public DateTime FirstSeen              { get; set; }
+    public DateTime LastAnalyzed           { get; set; } = DateTime.MinValue;
+    public DateTime LastNarrativePrint     { get; set; } = DateTime.MinValue;
+    public string   LastReportedSeverity   { get; set; } = "BENIGN";
+    public ConcurrentBag<SuspiciousEvent>                EventTimeline { get; set; } = new();
+    public ConcurrentDictionary<string, SuspiciousEvent> DedupCache    { get; set; } = new();
+    public ConcurrentDictionary<string, int> WriteDirectories { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public ConcurrentBag<string> ExeDropPaths { get; set; } = new();
+    public ConcurrentBag<string> DeletedPaths { get; set; } = new();
+    public ConcurrentBag<(string ChildName, string CommandLine)> SpawnedCommandLines { get; set; } = new();
+    public int TotalFileWrites;
+    public int TotalFileDeletes;
 }
 
 public class FileOperationsData
 {
-    public List<string> suspicious_reads { get; set; }
-    public List<string> uncommon_writes { get; set; }
+    public List<string> sensitive_directories { get; set; }
+    public List<string> sensitive_files       { get; set; }
+    public List<string> uncommon_writes       { get; set; }
+    public List<string> context_signals       { get; set; }
     public List<string> suspicious_overwrites { get; set; }
 }
 
 public class RegistryData
 {
-    public List<string> persistence { get; set; }
-    public List<string> tampering { get; set; }
-    public List<string> uac_bypass { get; set; }
+    public List<string> persistence       { get; set; }
+    public List<string> tampering         { get; set; }
+    public List<string> uac_bypass        { get; set; }
     public List<string> credential_access { get; set; }
 }
 
 public class NetworkData
 {
     public List<string> suspicious_domains { get; set; }
-    public List<int> suspicious_ports { get; set; }
+    public List<int>    suspicious_ports   { get; set; }
 }
 
 public class ProcessesData
 {
-    public List<string> lolbins { get; set; }
+    public List<string> lolbins                { get; set; }
     public List<string> accessibility_binaries { get; set; }
-    public List<string> suspicious_commands { get; set; }
+    public List<string> suspicious_commands    { get; set; }
 }
 
 public class ThreatData
 {
-    public FileOperationsData file_operations { get; set; }
-    public RegistryData registry { get; set; }
-    public NetworkData network { get; set; }
-    public ProcessesData processes { get; set; }
+    public FileOperationsData         file_operations          { get; set; }
+    public RegistryData               registry                 { get; set; }
+    public NetworkData                network                  { get; set; }
+    public ProcessesData              processes                { get; set; }
+    public List<string>               discovery_commands       { get; set; }
+    public Dictionary<string, int>    tactic_weights           { get; set; }
+    public List<KillChainRule>        kill_chains              { get; set; }
+    public ScoringConfig              scoring                  { get; set; }
+    public ProcessTrustData           process_trust            { get; set; }
+    public IndicatorClassification    indicator_classification { get; set; }
+    public AreaWeightsConfig          area_weights             { get; set; }
+    public List<ConfirmationChain>    confirmation_chains      { get; set; }
+}
+
+public class KillChainRule
+{
+    public string       name        { get; set; }
+    public List<string> sequence    { get; set; }
+    public int          bonus       { get; set; }
+    public string       description { get; set; }
+}
+
+public class ScoringConfig
+{
+    public int low_threshold                     { get; set; }
+    public int medium_threshold                  { get; set; }
+    public int review_threshold                  { get; set; }
+    public int high_threshold                    { get; set; }
+    public int critical_threshold                { get; set; }
+    public int velocity_window_seconds           { get; set; }
+    public int velocity_event_threshold          { get; set; }
+    public int velocity_bonus                    { get; set; }
+    public int breadth_bonus_2                   { get; set; }
+    public int breadth_bonus_3plus               { get; set; }
+}
+
+public class IndicatorClassification
+{
+    public List<string> hard_indicators { get; set; } = new();
+    public List<string> soft_indicators { get; set; } = new();
+}
+
+public class AreaWeightsConfig
+{
+    public List<string> high_value   { get; set; } = new();
+    public List<string> medium_value { get; set; } = new();
+    public List<string> low_value    { get; set; } = new();
+}
+
+public class ConfirmationChain
+{
+    public string       name                  { get; set; } = "";
+    public List<string> required_tactics      { get; set; } = new();
+    public List<string> corroborating_tactics { get; set; } = new();
+    public List<string> corroborating_events  { get; set; } = new();
+}
+
+public class ProcessTrustData
+{
+    public TrustCategory trusted_system     { get; set; }
+    public TrustCategory trusted_user_apps  { get; set; }
+    public TrustCategory shell_interpreters { get; set; }
+    public TrustCategory lolbin_tools       { get; set; }
+    public TrustCategory blacklisted        { get; set; }
+}
+
+public class TrustCategory
+{
+    public double       multiplier { get; set; }
+    public List<string> processes  { get; set; }
 }
 
 public static class MapToData
 {
+    private static List<MappedRule> _registryRules = new();
+    private static List<MappedRule> _writeRules     = new();
+    private static List<MappedRule> _overwriteRules = new();
+    private static List<MappedRule> _networkRules   = new();
+    private static List<MappedRule> _lolbinRules    = new();
+    private static List<MappedRule> _commandRules   = new();
+    private static List<MappedRule> _discoveryRules = new();
 
-    private static List<string> _filePaths = new List<string>();
-    private static List<string> _registryKeys = new List<string>();
-    public static List<string> _networkDomains = new List<string>();
-    private static List<string> _suspiciousCommands = new List<string>();
+    private static List<string> _sensitiveDirs  = new();
+    private static List<string> _sensitiveFiles = new();
 
-    private static HashSet<string> _processes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    public static ConcurrentDictionary<int, ProcessProfile> ActiveProfiles = new ConcurrentDictionary<int, ProcessProfile>();
+    public static List<string>   _networkDomains  = new();
+    public static ConcurrentDictionary<int, ProcessProfile> ActiveProfiles    = new();
+    public static ConcurrentDictionary<int, string>         _recentDnsQueries = new();
 
-    public static ConcurrentDictionary<int, string> _recentDnsQueries = new ConcurrentDictionary<int, string>();
+    public static Dictionary<string, int>    _tacticWeights           = new();
+    public static List<KillChainRule>        _killChains              = new();
+    public static ScoringConfig              _scoring                 = new();
+    public static IndicatorClassification    _indicatorClassification = new();
+    public static AreaWeightsConfig          _areaWeights             = new();
+    public static List<ConfirmationChain>    _confirmationChains      = new();
+    public static List<string>               _trustedSystem           = new();
+    public static List<string>               _trustedUserApps         = new();
+    public static Dictionary<string, double> _processTrustMultipliers = new(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<string>            _blacklistedProcesses    = new(StringComparer.OrdinalIgnoreCase);
+    public static List<string>               _contextSignalPaths      = new();
+
+    private static volatile bool _profilesDirty = false;
+    private static readonly System.Threading.Timer _saveTimer = new(_ =>
+    {
+        if (_profilesDirty) { _profilesDirty = false; SaveToFile("profiles.json"); }
+    }, null, 5000, 5000);
+
+    private static MappedRule R(string pattern, string category) =>
+        new() { Pattern = pattern.ToLowerInvariant(), Category = category };
+
+    private static string NormalizeRegKey(string key) =>
+        key.Replace("HKCU\\", "")
+           .Replace("HKEY_LOCAL_MACHINE\\", "")
+           .Replace("HKEY_CURRENT_USER\\", "")
+           .ToLowerInvariant();
 
     public static void LoadData(string jsonFilePath)
     {
-
         string json = File.ReadAllText(jsonFilePath);
-        var data = JsonSerializer.Deserialize<ThreatData>(json);
+        var data = JsonSerializer.Deserialize<ThreatData>(json)!;
 
-        _filePaths = (data.file_operations?.suspicious_reads ?? new List<string>())
-            .Concat(data.file_operations?.uncommon_writes ?? new List<string>())
-            .Concat(data.file_operations?.suspicious_overwrites ?? new List<string>())
-            .Select(p => Environment.ExpandEnvironmentVariables(p.Replace("@", "")).ToLowerInvariant())
-            .ToList();
+        _registryRules.Clear();
+        foreach (var k in data.registry?.persistence ?? new())
+            _registryRules.Add(R(NormalizeRegKey(k), "registry_persistence"));
+        foreach (var k in data.registry?.tampering ?? new())
+            _registryRules.Add(R(NormalizeRegKey(k), "registry_defense_evasion"));
+        foreach (var k in data.registry?.uac_bypass ?? new())
+            _registryRules.Add(R(NormalizeRegKey(k), "registry_privilege_escalation"));
+        foreach (var k in data.registry?.credential_access ?? new())
+            _registryRules.Add(R(NormalizeRegKey(k), "registry_credential_access"));
 
-        _registryKeys = (data.registry?.persistence ?? new List<string>())
-            .Concat(data.registry?.tampering ?? new List<string>())
-            .Concat(data.registry?.uac_bypass ?? new List<string>())
-            .Concat(data.registry?.credential_access ?? new List<string>())
-            .Select(r => r.Replace("HKCU\\", "").Replace("HKEY_LOCAL_MACHINE\\", "").ToLowerInvariant())
-            .ToList();
+        _sensitiveDirs  = data.file_operations?.sensitive_directories?.Select(d => d.ToLowerInvariant()).ToList() ?? new();
+        _sensitiveFiles = data.file_operations?.sensitive_files?.Select(f => f.ToLowerInvariant()).ToList() ?? new();
 
-        _networkDomains = data.network?.suspicious_domains?.Select(d => d.ToLowerInvariant()).ToList() ?? new List<string>();
+        _writeRules.Clear();
+        foreach (var w in data.file_operations?.uncommon_writes ?? new())
+            _writeRules.Add(R(w, "file_defense_evasion"));
 
-        _processes.Clear();
-    Console.WriteLine($"[DEBUG] Loaded {_filePaths.Count} file path rules");
-    Console.WriteLine($"[DEBUG] Loaded {_networkDomains.Count} domain rules: {string.Join(", ", _networkDomains.Take(5))}");
+        _overwriteRules.Clear();
+        foreach (var o in data.file_operations?.suspicious_overwrites ?? new())
+            _overwriteRules.Add(R(o, "file_persistence"));
 
-        var allProcesses = (data.processes?.lolbins ?? new List<string>())
-            .Concat(data.processes?.accessibility_binaries ?? new List<string>());
-        foreach (var proc in allProcesses)
+        _networkRules.Clear();
+        _networkDomains.Clear();
+        foreach (var d in data.network?.suspicious_domains ?? new())
         {
-            _processes.Add(proc.ToLowerInvariant());
+            string lower = d.ToLowerInvariant();
+            _networkDomains.Add(lower);
+            _networkRules.Add(R(lower, "network_c2"));
         }
 
-        _suspiciousCommands.Clear();
-        if (data.processes?.suspicious_commands != null)
+        _lolbinRules.Clear();
+        foreach (var p in data.processes?.lolbins ?? new())
+            _lolbinRules.Add(R(p, "process_lolbin"));
+        foreach (var p in data.processes?.accessibility_binaries ?? new())
+            _lolbinRules.Add(R(p, "process_accessibility"));
+
+        _commandRules.Clear();
+        foreach (var c in data.processes?.suspicious_commands ?? new())
+            _commandRules.Add(R(c, "process_defense_evasion"));
+
+        _discoveryRules.Clear();
+        foreach (var c in data.discovery_commands ?? new())
+            _discoveryRules.Add(R(c, "process_discovery"));
+
+        _processTrustMultipliers.Clear();
+        void RegisterTrust(TrustCategory? cat)
         {
-            foreach (var cmd in data.processes.suspicious_commands)
-            {
-                _suspiciousCommands.Add(cmd.ToLowerInvariant());
-            }
+            if (cat?.processes == null) return;
+            foreach (var p in cat.processes)
+                _processTrustMultipliers[p.ToLowerInvariant()] = cat.multiplier;
         }
+        RegisterTrust(data.process_trust?.trusted_system);
+        RegisterTrust(data.process_trust?.trusted_user_apps);
+        RegisterTrust(data.process_trust?.shell_interpreters);
+        RegisterTrust(data.process_trust?.lolbin_tools);
+        RegisterTrust(data.process_trust?.blacklisted);
+
+        _blacklistedProcesses.Clear();
+        foreach (var p in data.process_trust?.blacklisted?.processes ?? new())
+            _blacklistedProcesses.Add(p.ToLowerInvariant());
+
+        _trustedSystem   = data.process_trust?.trusted_system?.processes?.Select(p => p.ToLowerInvariant()).ToList() ?? new();
+        _trustedUserApps = data.process_trust?.trusted_user_apps?.processes?.Select(p => p.ToLowerInvariant()).ToList() ?? new();
+
+        _contextSignalPaths = data.file_operations?.context_signals?.Select(p => p.ToLowerInvariant()).ToList() ?? new();
+
+        _tacticWeights           = data.tactic_weights           ?? new();
+        _killChains              = data.kill_chains              ?? new();
+        _scoring                 = data.scoring                 ?? new();
+        _indicatorClassification = data.indicator_classification ?? new();
+        _areaWeights             = data.area_weights             ?? new();
+        _confirmationChains      = data.confirmation_chains      ?? new();
     }
 
     public static void EvaluateFileOperation(int pid, string processName, string filePath, string eventType)
     {
+        if (string.IsNullOrEmpty(filePath)) return;
+
         string lowerPath = filePath.ToLowerInvariant();
+        string fileName  = Path.GetFileName(lowerPath);
 
-        string match = _filePaths.FirstOrDefault(rule => lowerPath.Contains(rule));
-
-        if (match != null)
+        var profile = ActiveProfiles.GetOrAdd(pid, id => new ProcessProfile
         {
-            AddEventToProfile(pid, processName, eventType, match, filePath);
+            ProcessId = id, ProcessName = processName, FirstSeen = DateTime.Now
+        });
+
+        if (eventType == "FileWrite" || eventType == "FileOpen")
+        {
+            profile.TotalFileWrites++;
+            string dir = Path.GetDirectoryName(lowerPath) ?? "";
+            if (!string.IsNullOrEmpty(dir))
+                profile.WriteDirectories.AddOrUpdate(dir, 1, (_, c) => c + 1);
+        }
+        if (eventType == "FileDelete")
+        {
+            profile.TotalFileDeletes++;
+            profile.DeletedPaths.Add(filePath);
+        }
+
+        if (eventType == "FileWrite")
+        {
+            string ext = Path.GetExtension(lowerPath);
+            if (ext is ".exe" or ".dll" or ".scr" or ".pif"
+                    or ".bat" or ".ps1" or ".cmd" or ".vbs" or ".hta" or ".wsf")
+            {
+                profile.ExeDropPaths.Add(filePath);
+
+                bool isSuspiciousDropPath =
+                    lowerPath.Contains(@"\appdata\") ||
+                    lowerPath.Contains(@"\temp\")    ||
+                    lowerPath.Contains(@"\programdata\") ||
+                    lowerPath.Contains(@"\users\public\") ||
+                    lowerPath.Contains(@"\windows\temp\") ||
+                    lowerPath.Contains(@"\$recycle.bin\");
+
+                bool isLegitimateDropPath =
+                    lowerPath.Contains(@"\program files\") ||
+                    lowerPath.Contains(@"\program files (x86)\") ||
+                    lowerPath.Contains(@"\windows\system32\") ||
+                    lowerPath.Contains(@"\windows\syswow64\");
+
+                bool isBenignDrop =
+                    fileName.StartsWith("__psscriptpolicytest_") ||
+                    fileName.StartsWith("__pssessionconfigurationtest_");
+
+                if (isSuspiciousDropPath && !isLegitimateDropPath && !isBenignDrop)
+                    AddEventToProfile(pid, processName, "Executable Drop", ext, filePath, "file_exe_drop");
+            }
+        }
+
+        string? dirMatch = _sensitiveDirs.FirstOrDefault(dir => lowerPath.Contains(dir));
+        if (dirMatch != null)
+        {
+            string? fileMatch = _sensitiveFiles.FirstOrDefault(f => fileName.Contains(f) || lowerPath.EndsWith(f));
+            if (fileMatch != null)
+            {
+                AddEventToProfile(pid, processName, eventType, fileMatch, filePath, "credential_file_access");
+            }
+            else
+            {
+
+                if (dirMatch.Contains("\\appdata\\local\\packages\\"))
+                    return;
+
+                AddEventToProfile(pid, processName, "SensitiveDirAccess", dirMatch, filePath, "collection");
+            }
+            return;
+        }
+
+        if (eventType == "FileWrite" || eventType == "FileOpen")
+        {
+
+            var contextMatch = _contextSignalPaths.FirstOrDefault(p => lowerPath.Contains(p));
+            if (contextMatch != null)
+            {
+                AddEventToProfile(pid, processName, "ContextSignal", contextMatch, filePath, "context_signal");
+                return;
+            }
+
+            var writeRule = _writeRules.FirstOrDefault(w => lowerPath.Contains(w.Pattern));
+            if (writeRule != null)
+            {
+
+                if (writeRule.Pattern.Contains("fonts"))
+                {
+                    string ext = Path.GetExtension(lowerPath);
+                    if (ext is ".ttf" or ".otf" or ".fon" or ".fnt" or ".ttc" or ".eot")
+                        return;
+                }
+
+                AddEventToProfile(pid, processName, "UncommonWrite", writeRule.Pattern, filePath, writeRule.Category);
+                return;
+            }
+        }
+
+        var overwriteRule = _overwriteRules.FirstOrDefault(o => fileName.Contains(o.Pattern));
+        if (overwriteRule != null)
+        {
+            AddEventToProfile(pid, processName, "AccessibilityBinaryOverwrite", overwriteRule.Pattern, filePath, overwriteRule.Category);
         }
     }
 
-    public static void EvaluateRegistryAccess(int pid, string processName, string registryKey)
+    public static void EvaluateRegistryAccess(int pid, string processName, string registryKey, string operation = "Open")
     {
-        string lowerKey = registryKey.ToLowerInvariant();
+        if (string.IsNullOrEmpty(registryKey)) return;
 
-        string match = _registryKeys.FirstOrDefault(rule => lowerKey.Contains(rule));
+        string lowerKey = registryKey.ToLowerInvariant()
+            .Replace("\\registry\\machine\\", "")
+            .Replace("\\registry\\user\\",    "");
 
-        if (match != null)
+        var rule = _registryRules.FirstOrDefault(r => lowerKey.Contains(r.Pattern));
+        if (rule == null) return;
+
+        if (rule.Category == "registry_defense_evasion" && operation == "Open")
+            return;
+
+        if (rule.Pattern == "system\\currentcontrolset\\services" && operation == "Open")
+            return;
+
+        if (rule.Pattern == "system\\currentcontrolset\\services")
         {
-            AddEventToProfile(pid, processName, "Registry", match, registryKey);
+            string[] benignPrefixes = {
+                "services\\winsock", "services\\tcpip", "services\\dnscache",
+                "services\\dns",     "services\\afunix", "services\\crypt32", "services\\ccg"
+            };
+            if (benignPrefixes.Any(p => lowerKey.Contains(p))) return;
         }
+
+        AddEventToProfile(pid, processName, "Registry", rule.Pattern, registryKey, rule.Category);
     }
 
-    public static void EvaluateProcessSpawn(int parentPid, string parentProcessName, int childPid, string childProcessName, string commandLine)
+    public static void EvaluateProcessSpawn(int parentPid, string parentProcessName,
+        int childPid, string childProcessName, string commandLine)
     {
-        if (_processes.Contains(childProcessName))
+        string lowerChild = childProcessName.ToLowerInvariant();
+
+        var profile = ActiveProfiles.GetOrAdd(parentPid, id => new ProcessProfile
         {
-            AddEventToProfile(parentPid, parentProcessName, "ProcessSpawn", childProcessName, $"Spawned: {childProcessName} (PID: {childPid})");
+            ProcessId = id, ProcessName = parentProcessName, FirstSeen = DateTime.Now
+        });
+        if (!string.IsNullOrEmpty(commandLine))
+            profile.SpawnedCommandLines.Add((childProcessName, commandLine));
+
+        if (_blacklistedProcesses.Contains(lowerChild) ||
+            _blacklistedProcesses.Contains(lowerChild + ".exe"))
+        {
+            AddEventToProfile(parentPid, parentProcessName, "BlacklistedProcess", childProcessName,
+                childProcessName, "process_blacklisted");
+        }
+
+        var lolbinRule = _lolbinRules.FirstOrDefault(r =>
+            lowerChild.Contains(r.Pattern) ||
+            r.Pattern.Contains(lowerChild));
+        if (lolbinRule != null)
+        {
+            AddEventToProfile(parentPid, parentProcessName, "ProcessSpawn", childProcessName,
+                childProcessName, lolbinRule.Category);
+        }
+
+        var discoveryRule = _discoveryRules.FirstOrDefault(r => lowerChild.Contains(r.Pattern));
+        if (discoveryRule != null)
+        {
+            AddEventToProfile(parentPid, parentProcessName, "DiscoverySpawn", childProcessName,
+                childProcessName, discoveryRule.Category);
         }
 
         if (!string.IsNullOrEmpty(commandLine))
         {
-             string lowerCmd = commandLine.ToLowerInvariant();
-             string match = _suspiciousCommands.FirstOrDefault(rule => lowerCmd.Contains(rule));
-             if (match != null)
-             {
-                  AddEventToProfile(parentPid, parentProcessName, "SuspiciousCommand", match, $"Command Line: {commandLine}");
-             }
+            string lowerCmd = commandLine.ToLowerInvariant();
+            var cmdRule = _commandRules.FirstOrDefault(r => lowerCmd.Contains(r.Pattern));
+            if (cmdRule != null)
+            {
+                AddEventToProfile(parentPid, parentProcessName, "SuspiciousCommand", cmdRule.Pattern,
+                    commandLine, cmdRule.Category);
+            }
         }
     }
-    public static void SaveToFile(string outputPath)
-    {
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        string json = JsonSerializer.Serialize(ActiveProfiles.Values, options);
-        File.WriteAllText(outputPath, json);
-        Console.WriteLine($"[+] Profile dump saved to: {outputPath}");
 
+    public static void EvaluateNetworkConnection(int pid, string processName, string destination)
+    {
+        if (string.IsNullOrEmpty(destination)) return;
+
+        _recentDnsQueries.TryGetValue(pid, out string? knownDomain);
+        string fullDest  = knownDomain != null ? $"{knownDomain} ({destination})" : destination;
+        string lowerDest = fullDest.ToLowerInvariant();
+
+        var netRule = _networkRules.FirstOrDefault(r => lowerDest.Contains(r.Pattern));
+        if (netRule != null)
+        {
+            AddEventToProfile(pid, processName, "NetworkConnect", netRule.Pattern,
+                fullDest, netRule.Category);
+        }
     }
-    public static void AddEventToProfile(int pid, string processName, string eventType, string matchedRule, string rawData)
+
+    public static void AddEventToProfile(int pid, string processName, string eventType,
+        string matchedRule, string rawData, string category = "")
     {
         var profile = ActiveProfiles.GetOrAdd(pid, newId => new ProcessProfile
         {
-            ProcessId = newId,
+            ProcessId   = newId,
             ProcessName = processName,
-            FirstSeen = DateTime.Now
+            FirstSeen   = DateTime.Now
         });
 
-        profile.EventTimeline.Add(new SuspiciousEvent
+        string fingerprint = $"{pid}|{eventType}|{category}|{matchedRule}";
+        bool isNew = false;
+
+        if (profile.DedupCache.TryGetValue(fingerprint, out SuspiciousEvent? existing))
         {
-            Timestamp = DateTime.Now,
-            EventType = eventType,
-            MatchedIndicator = matchedRule,
-            RawData = rawData
-        });
+            existing.AttemptCount++;
+            existing.LastSeen = DateTime.Now;
+        }
+        else
+        {
+            isNew = true;
+            var (tactic, techniqueId, techniqueName) = AttackNarrator.ResolveCategory(category);
+            var ev = new SuspiciousEvent
+            {
+                Timestamp        = DateTime.Now,
+                LastSeen         = DateTime.Now,
+                Tactic           = tactic,
+                TechniqueId      = techniqueId,
+                TechniqueName    = techniqueName,
+                EventType        = eventType,
+                MatchedIndicator = matchedRule,
+                RawData          = rawData,
+                AttemptCount     = 1
+            };
+            profile.EventTimeline.Add(ev);
+            profile.DedupCache[fingerprint] = ev;
+        }
 
-        SaveToFile($"profile_{processName}_{pid}.json");
+        _profilesDirty = true;
 
+        if (!isNew && (DateTime.Now - profile.LastAnalyzed).TotalSeconds < 2.0) return;
+
+        profile.LastAnalyzed = DateTime.Now;
+
+        var report = BehaviorAnalyzer.Analyze(profile);
+
+        string newSeverity = report.FinalScore >= _scoring.critical_threshold ? "CRITICAL" :
+                             report.FinalScore >= _scoring.high_threshold     ? "HIGH"     :
+                             report.FinalScore >= _scoring.medium_threshold   ? "MEDIUM"   :
+                             report.FinalScore >= _scoring.low_threshold      ? "LOW"      : "BENIGN";
+
+        string prevSeverity = profile.LastReportedSeverity ?? "BENIGN";
+        bool severityEscalated = SeverityRank(newSeverity) > SeverityRank(prevSeverity);
+        bool highValueNewEvent = isNew && newSeverity == "CRITICAL" &&
+            AttackNarrator.IsHighValueCategory(category);
+
+        if (severityEscalated || highValueNewEvent)
+            profile.LastReportedSeverity = newSeverity;
     }
 
-    public static void EvaluateNetworkConnection(int pid, string processName, string destinationIp)
+    private static int SeverityRank(string s) => s switch {
+        "CRITICAL" => 4, "HIGH" => 3, "MEDIUM" => 2, "LOW" => 1, _ => 0
+    };
+
+    public static void SaveToFile(string outputPath)
     {
-        if (string.IsNullOrEmpty(destinationIp)) return;
-
-        _recentDnsQueries.TryGetValue(pid, out string? knownDomain);
-
-        string destination = knownDomain != null ? $"{knownDomain} ({destinationIp})" : destinationIp;
-        string lowerDest = destination.ToLowerInvariant();
-
-        string match = _networkDomains.FirstOrDefault(rule => lowerDest.Contains(rule));
-
-        if (match != null)
+        try
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[ALERT] Suspicious Network Connection! {processName} (PID: {pid}) connected to {destination}");
-            Console.ResetColor();
-            AddEventToProfile(pid, processName, "NetworkConnect", match, $"Connected to {destination}");
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string json = JsonSerializer.Serialize(ActiveProfiles.Values, options);
+            File.WriteAllText(outputPath, json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{ex.Message}");
         }
     }
 }
