@@ -22,17 +22,14 @@ jobs:
       - name: Restore
         run: dotnet restore Cyber-behaviour-profiling.sln
 
-      # SCA — flags known-vulnerable packages, non-blocking so it doesn't kill the build
       - name: SCA (vulnerable packages)
         run: dotnet list package --vulnerable --include-transitive 2>&1 | Tee-Object -FilePath sca.log
         continue-on-error: true
 
-      # Lint — reports formatting issues without blocking
       - name: Lint
         run: dotnet format Cyber-behaviour-profiling.sln --verify-no-changes 2>&1 | Tee-Object -FilePath lint.log
         continue-on-error: true
 
-      # SAST — CodeQL must wrap the build step
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -44,7 +41,6 @@ jobs:
       - name: Analyze (CodeQL)
         uses: github/codeql-action/analyze@v3
 
-      # Tests
       - name: Test
         run: >
           dotnet test Cyber-behaviour-profiling.sln
@@ -54,7 +50,6 @@ jobs:
           --logger "trx;LogFileName=results.trx"
           2>&1 | Tee-Object -FilePath test.log
 
-      # Staging — publish a self-contained Windows executable as a downloadable artifact
       - name: Publish (staging)
         run: >
           dotnet publish Cyber-behaviour-profiling.csproj
@@ -71,7 +66,6 @@ jobs:
           path: staging/
           retention-days: 14
 
-      # Upload all logs regardless of outcome
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

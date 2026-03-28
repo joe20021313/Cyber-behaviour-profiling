@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 
 namespace Cyber_behaviour_profiling
 {
@@ -22,9 +23,16 @@ namespace Cyber_behaviour_profiling
         public int FinalScore { get; set; } = 0;
         public string Severity { get; set; } = "BENIGN";
         public List<string> DecisionReasons { get; set; } = new();
+        public List<string> SafeReasons { get; set; } = new();
         public ChainConfirmationResult ChainResult { get; set; } = new();
         public int FiredChecks { get; set; } = 0;
+        public int TotalChecks { get; set; } = 0;
         public int ObservedTacticCount { get; set; } = 0;
+        public AnomalyResult? Anomaly { get; set; }
+        public bool IsSigned { get; set; }
+        public string SignerName { get; set; } = "";
+        public InvestigationResult? DirectoryInvestigation { get; set; }
+        public InvestigationResult? NetworkInvestigation { get; set; }
     }
 
     public class ProcessContext
@@ -148,10 +156,13 @@ namespace Cyber_behaviour_profiling
                     report.IsSuspicious = false;
                     report.FinalScore = 0;
                     report.Severity = "BENIGN";
+                    report.IsSigned = ctx.IsSigned;
+                    report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
                         $"[BENIGN] '{profile.ProcessName}' carries a valid Authenticode signature " +
                         $"('{ctx.SignerName}'), launched normally by '{ctx.ParentProcess}'. " +
                         $"Routine system activity suppressed.");
+                    report.SafeReasons = BuildSafeReasons(ctx, profile, events);
                     return report;
                 }
             }
@@ -179,10 +190,13 @@ namespace Cyber_behaviour_profiling
                     report.IsSuspicious = false;
                     report.FinalScore   = 0;
                     report.Severity     = "BENIGN";
+                    report.IsSigned = ctx.IsSigned;
+                    report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
                         $"[SAFE] '{profile.ProcessName}' is a signed subprocess of verified signed application " +
                         $"'{ctx.ParentProcess}' ({ctx.ParentFilePath}). " +
                         $"Activity monitored but not scored — no high-value events detected.");
+                    report.SafeReasons = BuildSafeReasons(ctx, profile, events);
                     return report;
                 }
             }
@@ -219,8 +233,11 @@ namespace Cyber_behaviour_profiling
                     report.IsSuspicious = false;
                     report.FinalScore = 0;
                     report.Severity = "BENIGN";
+                    report.IsSigned = ctx.IsSigned;
+                    report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
                         $"[BENIGN] '{profile.ProcessName}' is a valid signed application launched normally by parent '{ctx.ParentProcess}'. Safely ignored to avoid false positives.");
+                    report.SafeReasons = BuildSafeReasons(ctx, profile, events);
                     return report;
                 }
 
@@ -239,6 +256,12 @@ namespace Cyber_behaviour_profiling
             checks.AddRange(CheckFileChurnBehavior(ctx, profile));
             checks.AddRange(CheckDirectoryScatter(ctx, profile));
             checks.AddRange(CheckSelfDeletion(ctx, profile));
+
+            var anomaly = AnomalyDetector.Evaluate(profile, ctx);
+            var historyAnomaly = AnomalyDetector.EvaluateHistory(profile);
+            report.Anomaly = (historyAnomaly.AnomalyDetected ? historyAnomaly : anomaly);
+            report.IsSigned = ctx.IsSigned;
+            report.SignerName = ctx.SignerName;
 
             var chainResult = EvaluateAttackChains(events);
             if (!chainResult.HasHardIndicator)
@@ -262,6 +285,17 @@ namespace Cyber_behaviour_profiling
                 score += adj;
                 firedCount++;
                 report.DecisionReasons.Add($"  [{adj:+#;-#;0}pts] {check.Name}: {check.Reason}");
+            }
+
+            if (anomaly.AnomalyDetected)
+            {
+                score += anomaly.Score;
+                firedCount++;
+                string metrics = anomaly.SpikedMetrics.Count > 0
+                    ? string.Join(", ", anomaly.SpikedMetrics)
+                    : "behaviour deviation from baseline";
+                report.DecisionReasons.Add(
+                    $"  [+{anomaly.Score}pts] KNN Anomaly: {metrics}");
             }
 
             if (firedCount >= 6)
@@ -297,8 +331,47 @@ namespace Cyber_behaviour_profiling
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
 
+            var dirInvestigation = RunDirectoryInvestigation(profile);
+            if (dirInvestigation != null && dirInvestigation.Findings.Count > 0)
+            {
+                report.DirectoryInvestigation = dirInvestigation;
+                score += dirInvestigation.ScoreAdjustment;
+                firedCount += dirInvestigation.Findings.Count(f => f.Severity == FindingSeverity.Alert);
+                foreach (var f in dirInvestigation.Findings)
+                {
+                    string tag = f.Severity == FindingSeverity.Alert ? "ALERT" :
+                                 f.Severity == FindingSeverity.Warning ? "WARNING" : "INFO";
+                    report.DecisionReasons.Add($"  [Investigation/{tag}] {f.Description}");
+                    foreach (var child in f.Children)
+                        report.DecisionReasons.Add($"    ↳ {child.Description}");
+                }
+
+                if (dirInvestigation.OverallSuspicion >= SuspicionLevel.High && !chainResult.HasHardIndicator)
+                    chainResult.HasHardIndicator = true;
+            }
+
+            var netInvestigation = RunNetworkInvestigation(events, profile);
+            if (netInvestigation != null && netInvestigation.Findings.Count > 0)
+            {
+                report.NetworkInvestigation = netInvestigation;
+                score += netInvestigation.ScoreAdjustment;
+                firedCount += netInvestigation.Findings.Count(f => f.Severity == FindingSeverity.Alert);
+                foreach (var f in netInvestigation.Findings)
+                {
+                    string tag = f.Severity == FindingSeverity.Alert ? "ALERT" :
+                                 f.Severity == FindingSeverity.Warning ? "WARNING" : "INFO";
+                    report.DecisionReasons.Add($"  [Investigation/{tag}] {f.Description}");
+                    foreach (var child in f.Children)
+                        report.DecisionReasons.Add($"    ↳ {child.Description}");
+                }
+
+                if (netInvestigation.OverallSuspicion >= SuspicionLevel.High && !chainResult.HasHardIndicator)
+                    chainResult.HasHardIndicator = true;
+            }
+
             report.FinalScore = score;
             report.FiredChecks = firedCount;
+            report.TotalChecks = checks.Count;
             report.ObservedTacticCount = observedTacticCount;
             report.Severity = score >= MapToData._scoring.critical_threshold ? "CRITICAL" :
                               score >= MapToData._scoring.high_threshold     ? "HIGH"     :
@@ -313,7 +386,149 @@ namespace Cyber_behaviour_profiling
                 (chainResult.HasConfirmedChain ? $" | Chains: {string.Join(", ", chainResult.ConfirmedChains)}" : "") +
                 (!chainResult.HasHardIndicator ? " | No hard indicators" : ""));
 
+            if (grade == "SAFE")
+                report.SafeReasons = BuildSafeReasons(ctx, profile, events, checks,
+                    report.Anomaly, firedCount, checks.Count);
+
             return report;
+        }
+
+        private static InvestigationResult? RunDirectoryInvestigation(ProcessProfile profile)
+        {
+            try
+            {
+                if (profile.DirectorySnapshotBefore == null) return null;
+
+                var monitoredDirs = SystemDiscovery.GetMonitoredDirectories(MapToData.SensitiveDirs as IReadOnlyList<string>);
+                var afterSnapshot = SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
+
+                return SystemDiscovery.InvestigateDirectoryChanges(
+                    profile.DirectorySnapshotBefore,
+                    afterSnapshot,
+                    MapToData.SensitiveDirs as IReadOnlyList<string>);
+            }
+            catch (Exception ex)
+            {
+                InvestigationLog.Write($"Directory investigation error: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static InvestigationResult? RunNetworkInvestigation(
+            List<SuspiciousEvent> events, ProcessProfile profile)
+        {
+            try
+            {
+                var networkEvents = events
+                    .Where(e => e.EventType == "NetworkConnect" && e.Tactic != "CommandAndControl")
+                    .ToList();
+
+                if (networkEvents.Count == 0 || profile.DirectorySnapshotBefore == null)
+                    return null;
+
+                var downloadDirs = SystemDiscovery.GetDownloadDirectories();
+                var afterSnapshot = SystemDiscovery.TakeDirectorySnapshot(downloadDirs);
+
+                var combined = new InvestigationResult();
+                foreach (var netEvent in networkEvents)
+                {
+                    var r = SystemDiscovery.InvestigateNetworkEvent(
+                        netEvent, profile,
+                        profile.DirectorySnapshotBefore, afterSnapshot);
+
+                    combined.Findings.AddRange(r.Findings);
+                    combined.ScoreAdjustment += r.ScoreAdjustment;
+                    if (r.ShouldInvestigateFurther)
+                        combined.ShouldInvestigateFurther = true;
+                    if (r.OverallSuspicion > combined.OverallSuspicion)
+                        combined.OverallSuspicion = r.OverallSuspicion;
+                }
+
+                return combined.Findings.Count > 0 ? combined : null;
+            }
+            catch (Exception ex)
+            {
+                InvestigationLog.Write($"Network investigation error: {ex.Message}");
+                return null;
+            }
+        }
+
+        private static List<string> BuildSafeReasons(
+            ProcessContext ctx, ProcessProfile profile, List<SuspiciousEvent> events,
+            List<SemanticCheck>? checks = null, AnomalyResult? anomaly = null,
+            int firedCount = 0, int totalChecks = 0)
+        {
+            var reasons = new List<string>();
+
+            if (ctx.IsSigned && ctx.IsTrustedPublisher)
+                reasons.Add($"Signed by verified publisher '{ctx.SignerName}' (publisher on trusted whitelist).");
+            else if (ctx.IsSigned)
+                reasons.Add($"Digitally signed by '{ctx.SignerName}', but publisher is not on the trusted whitelist. Signature confirms the binary has not been tampered with.");
+            else if (ctx.FilePath != "UNKNOWN")
+                reasons.Add("Binary is unsigned — no digital signature found.");
+
+            if (ctx.FilePath != "UNKNOWN" && !ctx.IsSuspiciousPath)
+                reasons.Add($"Running from a standard install location ({ctx.FilePath}).");
+
+            if (!ctx.ParentIsSuspicious)
+            {
+                if (ctx.ParentIsTrustedPublisher)
+                    reasons.Add($"Launched by verified parent process '{ctx.ParentProcess}' ({ctx.ParentFilePath}).");
+                else
+                    reasons.Add($"Parent process '{ctx.ParentProcess}' is not flagged as suspicious.");
+            }
+
+            int fileEvents = events.Count(e => e.EventType is "FileWrite" or "FileRead" or "FileOpen" or "FileDelete" or "FileRename");
+            int netEvents = events.Count(e => e.EventType is "NetworkConnect" or "DNS_Query");
+            int procEvents = events.Count(e => e.EventType is "ProcessSpawn" or "DiscoverySpawn" or "SuspiciousCommand");
+            int regEvents = events.Count(e => e.EventType == "Registry");
+
+            var activityParts = new List<string>();
+            if (fileEvents > 0) activityParts.Add($"{fileEvents} file operation(s)");
+            if (netEvents > 0) activityParts.Add($"{netEvents} network connection(s)");
+            if (procEvents > 0) activityParts.Add($"{procEvents} child process(es)");
+            if (regEvents > 0) activityParts.Add($"{regEvents} registry access(es)");
+
+            if (activityParts.Count > 0)
+                reasons.Add($"Observed activity: {string.Join(", ", activityParts)} — none matched threat patterns in the rule database.");
+            else
+                reasons.Add("No ETW events were captured for this process during the monitoring window.");
+
+            if (checks != null && totalChecks > 0)
+            {
+                reasons.Add($"{totalChecks} behavioral checks evaluated, {firedCount} triggered.");
+                if (firedCount == 0)
+                    reasons.Add("No checks fired — file operations, network behaviour, process spawning, registry access, and persistence patterns all within normal bounds.");
+            }
+
+            var absent = new List<string>();
+            if (!events.Any(e => e.Tactic == "CredentialAccess"))
+                absent.Add("no credential access");
+            if (!events.Any(e => e.Tactic == "CommandAndControl"))
+                absent.Add("no command-and-control communication");
+            if (!events.Any(e => e.EventType == "DPAPI_Decrypt"))
+                absent.Add("no DPAPI decryption");
+            if (!events.Any(e => e.Tactic == "Persistence"))
+                absent.Add("no persistence mechanisms");
+            if (profile.ExeDropPaths.Count == 0)
+                absent.Add("no executable files dropped");
+            if (!events.Any(e => e.EventType == "BlacklistedProcess"))
+                absent.Add("no known malicious tools");
+
+            if (absent.Count > 0)
+                reasons.Add($"Absent threat indicators: {string.Join(", ", absent)}.");
+
+            if (anomaly != null)
+            {
+                if (!anomaly.AnomalyDetected)
+                    reasons.Add("Anomaly detector (KNN): behaviour is within the normal statistical range.");
+                else
+                    reasons.Add($"Note: anomaly detector flagged deviation — {string.Join(", ", anomaly.SpikedMetrics)}.");
+            }
+
+            reasons.Add("ETW event data is available for manual review if further investigation is needed.");
+
+            return reasons;
         }
 
         private static ChainConfirmationResult EvaluateAttackChains(List<SuspiciousEvent> events)
@@ -371,8 +586,10 @@ namespace Cyber_behaviour_profiling
         {
             if (ev.Tactic is "CredentialAccess" or "CommandAndControl")
                 return true;
-            if (ev.EventType is "DPAPI_Decrypt" or "BlacklistedProcess" or "AccessibilityBinaryOverwrite" or "NetworkConnect" or "DNS_Query")
+            if (ev.EventType is "DPAPI_Decrypt" or "BlacklistedProcess" or "AccessibilityBinaryOverwrite")
                 return true;
+            if (ev.EventType is "NetworkConnect" or "DNS_Query")
+                return ev.Tactic == "CommandAndControl";
             if (ev.EventType == "SensitiveDirAccess")
             {
                 string raw = (ev.RawData ?? "").ToLowerInvariant();
@@ -567,11 +784,13 @@ namespace Cyber_behaviour_profiling
                     raw.Contains("\\microsoft\\edge\\") || raw.Contains("\\brave\\"))
                     areas.Add("BrowserCredentials");
 
-                if (ind.Contains("vnc") || ind.Contains("putty") || ind.Contains("intelliforms"))
+                if (ev.EventType == "Registry" &&
+                    (ind.Contains("vnc") || ind.Contains("putty") || ind.Contains("intelliforms")))
                     areas.Add("ThirdPartyCredentials");
 
-                if (raw.Contains("currentversion\\run") || raw.Contains("winlogon") ||
-                    raw.Contains("\\services"))
+                if (ev.EventType == "Registry" &&
+                    (raw.Contains("currentversion\\run") || raw.Contains("winlogon") ||
+                     raw.Contains("\\services")))
                     areas.Add("PersistenceMechanisms");
 
                 if (raw.Contains("amsi") || raw.Contains("image file execution options"))
@@ -916,6 +1135,8 @@ namespace Cyber_behaviour_profiling
 
             var deletedExes = profile.DeletedPaths
                 .Where(p => exeExts.Contains(Path.GetExtension(p)))
+                .Where(p => { var fn = Path.GetFileName(p).ToLowerInvariant();
+                    return !fn.StartsWith("__psscriptpolicytest_") && !fn.StartsWith("__pssessionconfigurationtest_"); })
                 .ToList();
 
             bool deletedSelf = ownPath != "unknown" && profile.DeletedPaths
@@ -940,7 +1161,8 @@ namespace Cyber_behaviour_profiling
             var exeExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { ".exe", ".dll", ".scr", ".bat", ".cmd", ".ps1", ".vbs" };
             if (profile.DeletedPaths != null &&
-                profile.DeletedPaths.Any(p => exeExts.Contains(Path.GetExtension(p))))
+                profile.DeletedPaths.Any(p => exeExts.Contains(Path.GetExtension(p)) &&
+                    !Path.GetFileName(p).ToLowerInvariant().StartsWith("__psscriptpolicytest_")))
                 return true;
 
             if (profile.SpawnedCommandLines != null)
@@ -995,15 +1217,10 @@ namespace Cyber_behaviour_profiling
                     if (VerifyAuthenticode(ctx.FilePath))
                     {
                         ctx.IsSigned = true;
-                        ctx.IsTrustedPublisher = true;
-                        ctx.SignerName = "Trusted Publisher (Authenticode verified)";
-                    }
-                    else if (ctx.FilePath.Contains(@"\program files\windowsapps\", StringComparison.OrdinalIgnoreCase))
-                    {
-
-                        ctx.IsSigned = true;
-                        ctx.IsTrustedPublisher = true;
-                        ctx.SignerName = "Microsoft Corporation (Windows Store App)";
+                        string? publisher = ExtractPublisherName(ctx.FilePath);
+                        ctx.SignerName = publisher ?? "Unknown Publisher (signed)";
+                        ctx.IsTrustedPublisher = publisher != null
+                            && MapToData._trustedPublishers.Contains(publisher);
                     }
                 }
                 catch { ctx.IsSigned = false; }
@@ -1029,10 +1246,11 @@ namespace Cyber_behaviour_profiling
                             if (!string.IsNullOrEmpty(parentPath))
                             {
                                 if (VerifyAuthenticode(parentPath))
-                                    ctx.ParentIsTrustedPublisher = true;
-                                else if (parentPath.Contains(@"\program files\windowsapps\",
-                                             StringComparison.OrdinalIgnoreCase))
-                                    ctx.ParentIsTrustedPublisher = true;
+                                {
+                                    string? parentPublisher = ExtractPublisherName(parentPath);
+                                    ctx.ParentIsTrustedPublisher = parentPublisher != null
+                                        && MapToData._trustedPublishers.Contains(parentPublisher);
+                                }
                             }
                         }
                     }
@@ -1129,6 +1347,37 @@ namespace Cyber_behaviour_profiling
             MapToData._blacklistedProcesses.Contains(name + ".exe") ||
             MapToData._blacklistedProcesses.Any(b =>
                 Path.GetFileNameWithoutExtension(b).Equals(nameNoExt, StringComparison.OrdinalIgnoreCase));
+
+        private static string? ExtractPublisherName(string filePath)
+        {
+            try
+            {
+#pragma warning disable SYSLIB0057
+                var cert = X509Certificate.CreateFromSignedFile(filePath);
+#pragma warning restore SYSLIB0057
+                if (cert == null) return null;
+
+                using var cert2 = new X509Certificate2(cert);
+                string subject = cert2.Subject ?? "";
+                foreach (var part in subject.Split(','))
+                {
+                    string trimmed = part.Trim();
+                    if (trimmed.StartsWith("O=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string org = trimmed.Substring(2).Trim().Trim('"');
+                        if (!string.IsNullOrWhiteSpace(org))
+                            return org;
+                    }
+                }
+
+                string simpleName = cert2.GetNameInfo(X509NameType.SimpleName, false);
+                return string.IsNullOrWhiteSpace(simpleName) ? null : simpleName;
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         private static bool VerifyAuthenticode(string filePath)
         {

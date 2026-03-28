@@ -9,6 +9,7 @@ namespace Cyber_behaviour_profiling
     {
         public DateTime Timestamp { get; set; }
         public string Category { get; set; }
+        public string Tactic { get; set; }
         public string Icon { get; set; }
         public string Headline { get; set; }
         public string Detail { get; set; }
@@ -26,6 +27,16 @@ namespace Cyber_behaviour_profiling
         public List<NarrativeStep> Timeline { get; set; } = new();
         public string OverallStory { get; set; }
         public List<string> AbsentIndicators { get; set; } = new();
+        public List<string> AnomalyFindings { get; set; } = new();
+        public List<string> DecisionReasons { get; set; } = new();
+        public List<string> SafeReasons { get; set; } = new();
+        public int FinalScore { get; set; }
+
+        public List<string> DroppedFiles { get; set; } = new();
+        public List<string> DeletedFiles { get; set; } = new();
+        public List<(string ChildName, string CommandLine)> SpawnedCommands { get; set; } = new();
+        public bool IsSigned { get; set; }
+        public string SignerName { get; set; } = "";
     }
 
     public static class AttackNarrator
@@ -51,6 +62,7 @@ namespace Cyber_behaviour_profiling
             ["dpapi_decrypt"] = ("CredentialAccess", "T1555.004", "Credentials from Windows Credential Manager"),
             ["dns_c2"] = ("CommandAndControl", "T1071", "Application Layer Protocol"),
             ["file_exe_drop"] = ("Execution", "T1105", "Ingress Tool Transfer"),
+            ["network_outbound"] = ("", "", "Outbound Network Connection"),
         };
 
         public static (string Tactic, string TechniqueId, string TechniqueName) ResolveCategory(string category) =>
@@ -95,7 +107,16 @@ namespace Cyber_behaviour_profiling
                     ProcessId        = profile.ProcessId,
                     Grade            = grade,
                     OverallStory     = ReturnVerdict(grade),
-                    AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new()
+                    AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new(),
+                    AnomalyFindings  = report.Anomaly?.SpikedMetrics ?? new(),
+                    DecisionReasons  = report.DecisionReasons,
+                    SafeReasons      = report.SafeReasons,
+                    FinalScore       = report.FinalScore,
+                    DroppedFiles     = profile.ExeDropPaths.ToList(),
+                    DeletedFiles     = profile.DeletedPaths.ToList(),
+                    SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
+                    IsSigned         = report.IsSigned,
+                    SignerName       = report.SignerName
                 };
 
             var steps = events.Select(TranslateEvent).ToList();
@@ -116,7 +137,16 @@ namespace Cyber_behaviour_profiling
                 TotalSeconds     = (events.Last().LastSeen - events.First().Timestamp).TotalSeconds,
                 Timeline         = steps,
                 OverallStory     = story,
-                AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new()
+                AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new(),
+                AnomalyFindings  = report.Anomaly?.SpikedMetrics ?? new(),
+                DecisionReasons  = report.DecisionReasons,
+                SafeReasons      = report.SafeReasons,
+                FinalScore       = report.FinalScore,
+                DroppedFiles     = profile.ExeDropPaths.ToList(),
+                DeletedFiles     = profile.DeletedPaths.ToList(),
+                SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
+                IsSigned         = report.IsSigned,
+                SignerName       = report.SignerName
             };
         }
 
@@ -134,7 +164,8 @@ namespace Cyber_behaviour_profiling
                 "ContextSignal"                                                             => "Info",
                 "FileRead" or "FileWrite" or "FileOpen" or "FileDelete" or "FileRename"
                     or "SensitiveDirAccess" or "UncommonWrite"
-                    or "AccessibilityBinaryOverwrite"                                       => "File",
+                    or "AccessibilityBinaryOverwrite"
+                    or "Executable Drop"                                                    => "File",
                 "Registry"                                                                  => "Registry",
                 "NetworkConnect" or "DNS_Query"                                             => "Network",
                 "ProcessSpawn" or "SuspiciousCommand" or "DiscoverySpawn"
@@ -152,6 +183,7 @@ namespace Cyber_behaviour_profiling
                 _          => "[SYS ]"
             };
 
+            step.Tactic = ev.Tactic ?? "";
             step.Headline = BuildHeadline(ev, step.Category);
             return step;
         }
@@ -191,15 +223,20 @@ namespace Cyber_behaviour_profiling
                     return $"Wrote to system fonts folder{reps}";
                 if (raw.Contains("\\perflogs\\") || raw.Contains("\\public\\"))
                     return $"Wrote to world-writable system directory{reps}";
+                if (ev.EventType == "Executable Drop")
+                {
+                    string ext = Path.GetExtension(ev.RawData ?? "");
+                    return $"Dropped {ext} executable{reps} → '{ev.RawData}'";
+                }
                 if (ev.EventType == "FileDelete")
-                    return $"Deleted file{reps} → '{ShortPath(ev.RawData)}'";
+                    return $"Deleted file{reps} → '{ev.RawData}'";
                 if (ev.EventType == "FileRename")
-                    return $"Renamed/moved file{reps} → '{ShortPath(ev.RawData)}'";
+                    return $"Renamed/moved file{reps} → '{ev.RawData}'";
                 if (ev.EventType == "FileWrite")
-                    return $"Wrote file{reps} → '{ShortPath(ev.RawData)}'";
+                    return $"Wrote file{reps} → '{ev.RawData}'";
                 if (ev.EventType == "FileRead")
-                    return $"Read file{reps} → '{ShortPath(ev.RawData)}'";
-                return $"Opened '{ShortPath(ev.RawData)}'{reps}";
+                    return $"Read file{reps} → '{ev.RawData}'";
+                return $"Opened '{ev.RawData}'{reps}";
             }
 
             if (category == "Registry")
@@ -330,6 +367,24 @@ namespace Cyber_behaviour_profiling
                 Console.WriteLine($"  {narrative.OverallStory}");
                 Console.ResetColor();
                 Console.WriteLine();
+
+                if (narrative.SafeReasons.Any())
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("  Why this was marked safe:");
+                    Console.ResetColor();
+                    Console.WriteLine();
+                    foreach (var reason in narrative.SafeReasons)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.Write("    • ");
+                        Console.ForegroundColor = ConsoleColor.Gray;
+                        Console.WriteLine(reason);
+                    }
+                    Console.ResetColor();
+                }
+
+                Console.WriteLine();
                 Console.ForegroundColor = ConsoleColor.DarkGray;
                 Console.WriteLine(new string('─', 70));
                 Console.ResetColor();
@@ -375,6 +430,16 @@ namespace Cyber_behaviour_profiling
                         Console.ForegroundColor = ConsoleColor.DarkGray;
                         Console.WriteLine($"               └─ {Truncate(step.Detail, 80)}");
                     }
+                    Console.ResetColor();
+                }
+
+                if (narrative.AnomalyFindings.Any())
+                {
+                    Console.WriteLine();
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine("  Anomaly Detection (KNN):");
+                    foreach (var finding in narrative.AnomalyFindings)
+                        Console.WriteLine($"    ► {finding}");
                     Console.ResetColor();
                 }
 

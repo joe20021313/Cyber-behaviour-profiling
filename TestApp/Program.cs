@@ -1,709 +1,513 @@
-using System;
-using Microsoft.Diagnostics.Tracing.Parsers;
-using Microsoft.Diagnostics.Tracing.Session;
-using System.Collections.Generic;
-using System.Diagnostics.Eventing.Reader;
-using System.Xml;
-using Microsoft.Diagnostics.Tracing.Parsers.IIS_Trace;
 using System.Diagnostics;
-using System.Threading;
-using System.IO;
-using System.Collections.Concurrent;
+using System.Runtime.Versioning;
+using System.Text;
+using Microsoft.Win32;
 
-using System.Text.Json;
-public partial class Program
+[SupportedOSPlatform("windows")]
+public static class Simulator
 {
-    Dictionary<string, string> ageMap = new Dictionary<string, string>();
-    private static List<string> logEntries = new List<string>();
-    private static object logLock = new object();
+    private static readonly string Drop =
+        Path.Combine(Path.GetTempPath(), $"sim_{Environment.ProcessId}");
 
-    public static void Main(string[] args)
-
+    public static async Task Main()
     {
-        logEntries.Add("Activity Log - " + DateTime.Now);
-        Console.WriteLine("Enter process name to monitor");
-        string targetProcess = Console.ReadLine()?.ToLower() ?? "";
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("  CyberProfiler — Behaviour Simulator");
+        Console.WriteLine("  ====================================");
+        Console.ResetColor();
+        Console.WriteLine($"  PID  : {Environment.ProcessId}");
+        Console.WriteLine($"  Name : {Process.GetCurrentProcess().ProcessName}");
+        Console.WriteLine();
 
-        if (string.IsNullOrWhiteSpace(targetProcess))
+        Console.WriteLine("  Choose a simulation mode:");
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("    [1]  Malicious    — Full attack chain (drops, persistence, creds, exfil, cleanup)");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.DarkYellow;
+        Console.WriteLine("    [2]  Suspicious   — Reconnaissance only (looks around, no damage)");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("    [3]  Inconclusive — Ambiguous activity (borderline behaviour)");
+        Console.ResetColor();
+        Console.WriteLine();
+
+        int mode = 0;
+        while (mode < 1 || mode > 3)
         {
-            Console.WriteLine("No process name provided. Exiting.");
-            return;
+            Console.Write("  Enter 1, 2, or 3: ");
+            int.TryParse(Console.ReadLine()?.Trim(), out mode);
         }
 
-        Console.CancelKeyPress += (sender, e) =>
-        {
-            e.Cancel = true;
-            Console.WriteLine("\nSaving logs to file...");
-            SaveAllLogsToFile("activity_log.txt");
-            Console.WriteLine("Logs saved. Exiting.");
-            Environment.Exit(0);
-        };
+        Console.WriteLine();
+        Console.WriteLine("  Start the profiler targeting this process, then press ENTER.");
+        Console.ReadLine();
 
-        Thread workerThread = new Thread(new ThreadStart(() => MonitorSysmon(targetProcess)));
-        workerThread.Start();
-        Thread workerThread1 = new Thread(new ThreadStart(() => MonitorProcess(targetProcess)));
-        workerThread1.Start();
+        Directory.CreateDirectory(Drop);
 
-    }
-
-    public static void MonitorSysmon(string targetProcess)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
-            return;
-        }
-
-        string query = "*[System]";
-        var eventLogQuery = new EventLogQuery("Microsoft-Windows-Sysmon/Operational", PathType.LogName, query);
-        using (var watcher = new EventLogWatcher(eventLogQuery))
-        {
-            Console.WriteLine($"Monitoring '{targetProcess}' for file activity via Sysmon...");
-
-            watcher.EventRecordWritten += (sender, e) =>
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    Console.WriteLine("Sysmon monitoring via EventLogWatcher is only supported on Windows.");
-                    return;
-                }
-                if (e.EventRecord != null)
-                {
-                    ProcessSysmonEvent(e.EventRecord, targetProcess);
-                }
-            };
-
-            watcher.Enabled = true;
-
-            while (true)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-    }
-
-    static void ProcessSysmonEvent(EventRecord record, string targetProcess)
-    {
         try
         {
-            string xml = record.ToXml();
-            var doc = new XmlDocument();
-            doc.LoadXml(xml);
-
-            var eventId = record.Id;
-            var nsMgr = new XmlNamespaceManager(doc.NameTable);
-            nsMgr.AddNamespace("ns", "http://schemas.microsoft.com/win/2004/08/events/event");
-
-            var imageNode = doc.SelectSingleNode("
-            string image = imageNode?.InnerText?.ToLower() ?? "";
-
-            if (!image.Contains(targetProcess)) return;
-
-            Console.WriteLine($"[Event ID {eventId}] {GetEventName(eventId)}");
-
-            var dataNodes = doc.SelectNodes("
-            foreach (XmlNode node in dataNodes)
+            switch (mode)
             {
-                string name = node.Attributes?["Name"]?.Value ?? "";
-                string value = node.InnerText;
-                Console.WriteLine($"  {name}: {value}");
+                case 1: await RunMalicious();     break;
+                case 2: await RunSuspicious();    break;
+                case 3: await RunInconclusive();  break;
             }
-            Console.WriteLine("---------------------------------------------------------");
-
         }
-        catch (Exception ex)
+        finally
         {
-            Console.WriteLine($"Error processing Sysmon event: {ex.Message}");
+            await Cleanup();
         }
+
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("  Simulation finished. Check the profiler for detections.");
+        Console.ResetColor();
+        Console.ReadLine();
     }
 
-    static string GetEventName(int eventId)
+    static async Task RunMalicious()
     {
-        return eventId switch
+        await Phase("1 — BASELINE",                     Baseline);
+        await Phase("2 — DOWNLOAD & DROP",              Mal_DownloadAndDrop);
+        await Phase("3 — LOLBIN / POWERSHELL EXECUTION",Mal_LolbinExecution);
+        await Phase("4 — REGISTRY PERSISTENCE",         Mal_RegistryPersistence);
+        await Phase("5 — CREDENTIAL HARVESTING",        Mal_CredentialHarvest);
+        await Phase("6 — EXFILTRATION BURST",           Mal_ExfiltrationBurst);
+        await Phase("7 — FILE CHURN",                   Mal_FileChurn);
+        await Phase("8 — SELF-DELETION",                Mal_SelfDeletion);
+    }
+
+    static async Task RunSuspicious()
+    {
+        await Phase("1 — BASELINE",                Baseline);
+        await Phase("2 — DIRECTORY ENUMERATION",   Sus_DirectoryEnum);
+        await Phase("3 — SYSTEM DISCOVERY TOOLS",  Sus_DiscoveryTools);
+        await Phase("4 — PROCESS SPAWNING",        Sus_ProcessSpawns);
+        await Phase("5 — NETWORK PROBING",         Sus_NetworkProbe);
+        await Phase("6 — RAPID FILE WRITES",       Sus_RapidWrites);
+    }
+
+    static async Task RunInconclusive()
+    {
+        await Phase("1 — BASELINE",               Baseline);
+        await Phase("2 — ORDINARY FILE ACTIVITY",  Inc_FileActivity);
+        await Phase("3 — SINGLE NETWORK CALL",     Inc_SingleNetwork);
+        await Phase("4 — TEMP FILE WRITES",        Inc_TempWrites);
+        await Phase("5 — DIRECTORY CHECKS",        Inc_DirectoryChecks);
+    }
+
+    static async Task Baseline()
+    {
+        Log("Reading ordinary files to establish quiet baseline (~20s)...");
+        string[] probes =
         {
-            1 => "ProcessCreate",
-            3 => "NetworkConnect",
-            10 => "ProcessAccess",
-            11 => "FileCreate",
-            23 => "FileDelete",
-            _ => $"Event {eventId}"
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            Environment.SystemDirectory,
         };
-    }
-
-    public static void MonitorProcess(string targetProcess)
-    {
-        MapToData.LoadData("data.json");
-
-        var monitoredPids = new HashSet<uint>();
-        foreach (var p in Process.GetProcessesByName(targetProcess))
-            monitoredPids.Add((uint)p.Id);
-
-        bool ShouldMonitor(string processName, uint pid) =>
-            processName?.ToLower().Contains(targetProcess) == true || monitoredPids.Contains(pid);
-
-        using (var userSession = new TraceEventSession("DPAPIMonitorSession"))
-        using (var dnsSession = new TraceEventSession("DNSMonitorSession"))
-        using (var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName))
+        for (int i = 0; i < 10; i++)
         {
-            userSession.EnableProvider(
-               new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"),
-               Microsoft.Diagnostics.Tracing.TraceEventLevel.Verbose
-           );
-
-            userSession.Source.Dynamic.All += data =>
-            {
-                if (data.ProviderGuid == new Guid("89fe8f40-cdce-464e-8217-15ef97d4c7c3"))
-                {
-                    if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                    {
-                        string msg = $"[!] DPAPI DECRYPT - Process: {data.ProcessName} PID:{data.ProcessID} Event:{data.EventName} Time:{data.TimeStamp}";
-                        Console.WriteLine(msg);
-                        Console.WriteLine("---------------------------------------------------------");
-                        AddLogEntry(msg);
-                        AddLogEntry("---------------------------------------------------------");
-                    }
-                }
-            };
-
-            dnsSession.EnableProvider("Microsoft-Windows-DNS-Client");
-            dnsSession.Source.Dynamic.All += dnsData =>
-            {
-                if (dnsData.EventName == "DNS_Query")
-                {
-                    string queriedDomain = (string)dnsData.PayloadByName("QueryName");
-
-                    if (queriedDomain != null && MapToData._networkDomains.Contains(queriedDomain.ToLowerInvariant()))
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"[ALERT] Malicious domain requested: {queriedDomain} (PID: {dnsData.ProcessID})");
-                        Console.ResetColor();
-
-                        MapToData.AddEventToProfile(dnsData.ProcessID, dnsData.ProcessName ?? "Unknown", "DNS_Query", queriedDomain, $"Requested domain: {queriedDomain}");
-                    }
-                }
-            };
-
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                session.Stop();
-                userSession.Stop();
-                dnsSession.Stop();
-            };
-
-            session.EnableKernelProvider(
-                KernelTraceEventParser.Keywords.FileIO |
-                KernelTraceEventParser.Keywords.Process |
-                KernelTraceEventParser.Keywords.FileIOInit |
-                KernelTraceEventParser.Keywords.Registry |
-                KernelTraceEventParser.Keywords.DiskFileIO |
-                KernelTraceEventParser.Keywords.NetworkTCPIP
-            );
-
-            Console.WriteLine($"Monitoring '{targetProcess}' for file activity...");
-            Console.WriteLine("Press Ctrl+C to stop.");
-            Console.WriteLine("---------------------------------------------------------");
-
-            session.Source.Kernel.ProcessStart += data =>
-            {
-                if (monitoredPids.Contains((uint)data.ParentID))
-                {
-                    monitoredPids.Add((uint)data.ProcessID);
-
-                    Console.WriteLine($" PROCESS SPAWNED");
-                    Console.WriteLine($"   Parent Process: {targetProcess}");
-                    Console.WriteLine($"   New Process: {data.ImageFileName}");
-                    Console.WriteLine($"   Command Line: {data.CommandLine}");
-                    Console.WriteLine($"   Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($" PROCESS SPAWNED");
-                    AddLogEntry($"   Parent Process: {targetProcess}");
-                    AddLogEntry($"   New Process: {data.ImageFileName}");
-                    AddLogEntry($"   Command Line: {data.CommandLine}");
-                    AddLogEntry($"   Time: {data.TimeStamp}");
-
-                    MapToData.EvaluateProcessSpawn(data.ParentID, targetProcess, data.ProcessID, data.ProcessName ?? "", data.CommandLine ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistryCreate += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry create");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry create");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistryOpen += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry open");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry open");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.RegistrySetValue += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: Registry change");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"        Key path: {data.KeyName}");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: Registry change");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        Key path: {data.KeyName}");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "");
-                }
-            };
-
-            session.Source.Kernel.FileIOWrite += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    Console.WriteLine($"Type: File write");
-                    Console.WriteLine($"[WRITE] Process: {data.ProcessName}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"        Size: {data.IoSize} bytes");
-                    Console.WriteLine($"        Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File write");
-                    AddLogEntry($"[WRITE] Process: {data.ProcessName}");
-                    AddLogEntry($"        File: {data.FileName}");
-                    AddLogEntry($"        Size: {data.IoSize} bytes");
-                    AddLogEntry($"        Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileWrite");
-                }
-            };
-
-            session.Source.Kernel.FileIOCreate += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    if (string.IsNullOrEmpty(data.FileName)) return;
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileOpen");
-
-                    Console.WriteLine($"Type: File Open");
-                    Console.WriteLine($"[READ] Process: {data.ProcessName}");
-                    Console.WriteLine($"       ID: {data.ProcessID}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"       Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File Open");
-                    AddLogEntry($"[READ] Process: {data.ProcessName}");
-                    AddLogEntry($"       ID: {data.ProcessID}");
-                    AddLogEntry($"       File: {data.FileName}");
-                    AddLogEntry($"       Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-                }
-            };
-
-            session.Source.Kernel.FileIORead += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    if (string.IsNullOrEmpty(data.FileName)) return;
-
-                    MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileRead");
-
-                    Console.WriteLine($"Type: File read");
-                    Console.WriteLine($"[READ] Process: {data.ProcessName}");
-                    Console.WriteLine($"       ID: {data.ProcessID}");
-                    Console.WriteLine($"       File: {data.FileName}");
-                    Console.WriteLine($"       Time: {data.TimeStamp}");
-                    Console.WriteLine("---------------------------------------------------------");
-
-                    AddLogEntry($"Type: File read");
-                    AddLogEntry($"[READ] Process: {data.ProcessName}");
-                    AddLogEntry($"       ID: {data.ProcessID}");
-                    AddLogEntry($"       File: {data.FileName}");
-                    AddLogEntry($"       Time: {data.TimeStamp}");
-                    AddLogEntry("---------------------------------------------------------");
-                }
-            };
-
-            session.Source.Kernel.TcpIpConnect += data =>
-            {
-                if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
-                {
-                    string msg = $"[!] NETWORK CONNECT - Process: {data.ProcessName} -> {data.daddr}:{data.dport} Time:{data.TimeStamp}";
-                    Console.WriteLine(msg);
-                    Console.WriteLine("---------------------------------------------------------");
-                    AddLogEntry(msg);
-                    AddLogEntry("---------------------------------------------------------");
-
-                    MapToData.EvaluateNetworkConnection(data);
-                }
-            };
-
-            Thread dpapiThread = new Thread(() => userSession.Source.Process());
-            dpapiThread.IsBackground = true;
-            dpapiThread.Start();
-
-            Thread dnsThread = new Thread(() => dnsSession.Source.Process());
-            dnsThread.IsBackground = true;
-            dnsThread.Start();
-
-            session.Source.Process();
+            foreach (var dir in probes)
+                _ = Directory.Exists(dir);
+            await Task.Delay(2000);
+            Log($"  baseline tick {i + 1}/10");
         }
     }
 
-    static void readPowerShellCommands()
+    static async Task Mal_DownloadAndDrop()
     {
+        string staging = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "WindowsUpdate", "cache");
+        Directory.CreateDirectory(staging);
 
-    }
-
-    static void dnsQuery()
-    {
-
-    }
-    public static void UACBypassRegistryKeys()
-    {
-
-    }
-
-    static void enableFirewallMonitoring()
-    {
+        Log("Connecting to remote host to fetch payload...");
+        byte[] bytes;
         try
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "auditpol.exe",
-                Arguments = "/set /subcategory:\"Filtering Platform Policy Change\" /success:enable /failure:enable",
-                Verb = "runas",
-                CreateNoWindow = true,
-                UseShellExecute = true
-            };
-            using var proc = Process.Start(psi);
-            proc.WaitForExit();
-            if (proc.ExitCode == 0)
-                Console.WriteLine("Firewall auditing policy enabled.");
-            else
-                Console.WriteLine("Failed to enable firewall auditing policy. Exit code: " + proc.ExitCode);
-            Environment.Exit(1);
+            using var http = new HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0");
+            bytes = await http.GetByteArrayAsync("https://github.com");
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine("Error enabling firewall auditing: " + ex.Message);
-            Environment.Exit(1);
+            bytes = new byte[512];
+            bytes[0] = 0x4D; bytes[1] = 0x5A;
+            Log("  (offline — using synthetic PE bytes)");
         }
 
+        string exePath = Path.Combine(staging, "svcupdate.exe");
+        string batPath = Path.Combine(staging, "install.bat");
+        string ps1Path = Path.Combine(staging, "stage.ps1");
+        string dllPath = Path.Combine(staging, "helper.dll");
+
+        await File.WriteAllBytesAsync(exePath, bytes);
+        await File.WriteAllTextAsync(batPath, "@echo off\r\necho installing...");
+        await File.WriteAllTextAsync(ps1Path, "# stage loader");
+        await File.WriteAllTextAsync(dllPath, "MZ");
+
+        Log($"  Dropped: {exePath}");
+        Log($"  Dropped: {batPath}");
+        Log($"  Dropped: {ps1Path}");
+        Log($"  Dropped: {dllPath}");
+
+        _extraDirs.Add(staging);
+        await Task.Delay(1000);
     }
 
-    private static void AddLogEntry(string entry)
+    static async Task Mal_LolbinExecution()
     {
-        lock (logLock)
-        {
-            logEntries.Add(entry);
-        }
+        Log("Spawning powershell.exe -ExecutionPolicy Bypass ...");
+        await Spawn("powershell.exe",
+            "-ExecutionPolicy Bypass -NoProfile -Command \"Write-Host 'Simulated payload execution'; Start-Sleep 2\"",
+            showWindow: true);
+        await Task.Delay(1500);
+
+        string cmd     = "Write-Host 'payload'";
+        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(cmd));
+        Log("Spawning powershell.exe -EncodedCommand <base64> ...");
+        await Spawn("powershell.exe", $"-EncodedCommand {encoded}", showWindow: true);
+        await Task.Delay(1500);
+
+        Log("Spawning certutil.exe (LOLBin) ...");
+        await Spawn("certutil.exe",
+            "-hashfile \"" + Environment.GetCommandLineArgs()[0] + "\" MD5");
+        await Task.Delay(1000);
+
+        Log("Spawning mshta.exe (LOLBin) ...");
+        await Spawn("mshta.exe", "about:blank");
+        await Task.Delay(1000);
     }
 
-    private static void SaveAllLogsToFile(string fileName)
+    static async Task Mal_RegistryPersistence()
     {
-        lock (logLock)
+        const string runKey  = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+        const string valName = "SimUpdate";
+
+        Log($"Writing HKCU\\{runKey}\\{valName} ...");
+        using (var key = Registry.CurrentUser.OpenSubKey(runKey, writable: true))
+            key?.SetValue(valName, @"C:\Windows\Temp\svcupdate.exe");
+        await Task.Delay(2000);
+
+        Log("  Removing persistence key...");
+        using (var key = Registry.CurrentUser.OpenSubKey(runKey, writable: true))
+            key?.DeleteValue(valName, throwOnMissingValue: false);
+
+        Log("Reading Winlogon key...");
+        using var wl = Registry.LocalMachine.OpenSubKey(
+            @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon");
+        Log($"  Userinit = {wl?.GetValue("Userinit") ?? "(no access)"}");
+        await Task.Delay(500);
+    }
+
+    static async Task Mal_CredentialHarvest()
+    {
+        string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        string[] targets =
         {
-            if (logEntries.Count == 0)
-            {
-                Console.WriteLine("No log entries to save.");
-                return;
-            }
+            Path.Combine(localapp, "Google", "Chrome", "User Data", "Default", "Login Data"),
+            Path.Combine(localapp, "Google", "Chrome", "User Data", "Default", "Cookies"),
+            Path.Combine(appdata,  "Microsoft", "Credentials"),
+            Path.Combine(appdata,  "Microsoft", "Protect"),
+            Path.Combine(home, ".ssh", "id_rsa"),
+            Path.Combine(home, ".ssh", "known_hosts"),
+            Path.Combine(appdata, "Mozilla", "Firefox", "Profiles"),
+        };
 
-            string docPath = Directory.GetCurrentDirectory();
-            string logPath = Path.Combine(docPath, fileName);
-
+        Log("Probing credential file locations...");
+        foreach (var target in targets)
+        {
             try
             {
-                File.WriteAllLines(logPath, logEntries);
-                Console.WriteLine($"Saved {logEntries.Count} log entries to: {logPath}");
+                bool exists = File.Exists(target) || Directory.Exists(target);
+                Log($"  {(exists ? "[found]" : "[not found]")} {target}");
             }
-            catch (Exception ex)
+            catch { Log($"  [denied]  {target}"); }
+            await Task.Delay(200);
+        }
+    }
+
+    static async Task Mal_ExfiltrationBurst()
+    {
+        string[] dirs = Enumerable.Range(0, 6)
+            .Select(i => Path.Combine(Drop, $"exfil_{(char)('a' + i)}"))
+            .ToArray();
+        foreach (var d in dirs) Directory.CreateDirectory(d);
+
+        Log("Writing 80 files across 6 directories rapidly...");
+        int count = 0;
+        for (int round = 0; round < 4; round++)
+        {
+            foreach (var dir in dirs)
             {
-                Console.WriteLine($"Error saving logs: {ex.Message}");
+                string path = Path.Combine(dir, $"data_{count++}.bin");
+                await File.WriteAllBytesAsync(path, Encoding.UTF8.GetBytes(new string('A', 2048)));
             }
+            await Task.Delay(50);
+        }
+        Log($"  Wrote {count} files.");
+
+        Log("Making outbound HTTP connections (exfiltration pattern)...");
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        foreach (var host in new[] { "https://github.com", "https://api.github.com" })
+        {
+            try   { _ = await http.GetStringAsync(host); Log($"  Connected: {host}"); }
+            catch { Log($"  (no route to {host})"); }
+            await Task.Delay(300);
         }
     }
 
-}
-
-public class SuspiciousEvent
-{
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; }
-    public string MatchedIndicator { get; set; }
-    public string RawData { get; set; }
-}
-
-public class ProcessProfile
-{
-    public int ProcessId { get; set; }
-    public string ProcessName { get; set; }
-    public DateTime FirstSeen { get; set; }
-
-    public ConcurrentBag<SuspiciousEvent> EventTimeline { get; set; } = new ConcurrentBag<SuspiciousEvent>();
-
-}
-
-public class FileOperationsData
-{
-    public List<string> suspicious_reads { get; set; } = new List<string>();
-    public List<string> uncommon_writes { get; set; } = new List<string>();
-    public List<string> suspicious_overwrites { get; set; } = new List<string>();
-}
-
-public class RegistryData
-{
-    public List<string> persistence { get; set; } = new List<string>();
-    public List<string> tampering { get; set; } = new List<string>();
-    public List<string> uac_bypass { get; set; } = new List<string>();
-    public List<string> credential_access { get; set; } = new List<string>();
-}
-
-public class NetworkData
-{
-    public List<string> suspicious_domains { get; set; } = new List<string>();
-    public List<int> suspicious_ports { get; set; } = new List<int>();
-}
-
-public class ProcessData
-{
-    public List<string> lolbins { get; set; } = new List<string>();
-    public List<string> accessibility_binaries { get; set; } = new List<string>();
-    public List<string> suspicious_commands { get; set; } = new List<string>();
-}
-
-public class PowerShellData
-{
-    public List<string> suspicious_keywords { get; set; } = new List<string>();
-}
-
-public class ThreatData
-{
-    public FileOperationsData file_operations { get; set; } = new FileOperationsData();
-    public RegistryData registry { get; set; } = new RegistryData();
-    public NetworkData network { get; set; } = new NetworkData();
-    public ProcessData processes { get; set; } = new ProcessData();
-
-    public PowerShellData powershell { get; set; } = new PowerShellData();
-
-}
-
-public static class MapToData
-{
-    private static FileOperationsData _fileOps = new FileOperationsData();
-    private static RegistryData _registryOps = new RegistryData();
-    public static List<string> _networkDomains = new List<string>();
-    private static List<int> _suspiciousPorts = new List<int>();
-    private static HashSet<string> _suspiciousProcesses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    private static List<string> _suspiciousCommands = new List<string>();
-    public static List<string> _powershellKeywords = new List<string>();
-    public static ConcurrentDictionary<int, ProcessProfile> ActiveProfiles = new ConcurrentDictionary<int, ProcessProfile>();
-
-    private static List<string> FormatList(List<string> input)
+    static async Task Mal_FileChurn()
     {
-        if (input == null) return new List<string>();
-        return input.Select(p => Environment.ExpandEnvironmentVariables(p.Replace("@", "")).ToLowerInvariant()).ToList();
+        string churnDir = Path.Combine(Drop, "churn");
+        Directory.CreateDirectory(churnDir);
+        var written = new List<string>();
+
+        Log("Writing 30 files then deleting them (churn)...");
+        for (int i = 0; i < 30; i++)
+        {
+            string p = Path.Combine(churnDir, $"tmp_{i}.dat");
+            await File.WriteAllTextAsync(p, $"churn {i}");
+            written.Add(p);
+            await Task.Delay(30);
+        }
+        await Task.Delay(300);
+        foreach (var p in written)
+        {
+            try { File.Delete(p); } catch { }
+            await Task.Delay(15);
+        }
+        Log($"  Churned {written.Count} files.");
     }
 
-    public static void LoadData(string jsonFilePath)
+    static async Task Mal_SelfDeletion()
     {
-        string json = File.ReadAllText(jsonFilePath);
-        var data = JsonSerializer.Deserialize<ThreatData>(json);
-        if (data == null) return;
+        string marker = Path.Combine(Drop, "marker.exe");
+        await File.WriteAllTextAsync(marker, "marker");
 
-        if (data.file_operations != null)
-        {
-            _fileOps.suspicious_reads    = FormatList(data.file_operations.suspicious_reads);
-            _fileOps.uncommon_writes     = FormatList(data.file_operations.uncommon_writes);
-            _fileOps.suspicious_overwrites = FormatList(data.file_operations.suspicious_overwrites);
-        }
+        Log("Spawning cmd.exe to delete dropped file after delay (self-deletion pattern)...");
+        await Spawn("cmd.exe",
+            $"/c ping -n 3 127.0.0.1 > nul && del /f /q \"{marker}\"");
+        await Task.Delay(4000);
+        Log("  Done.");
+    }
 
-        if (data.registry != null)
-        {
-            string clean(string r) => r.Replace("HKCU\\\\", "").Replace("HKEY_LOCAL_MACHINE\\\\", "").ToLowerInvariant();
-            _registryOps.persistence       = data.registry.persistence?.Select(clean).ToList()       ?? new List<string>();
-            _registryOps.tampering         = data.registry.tampering?.Select(clean).ToList()         ?? new List<string>();
-            _registryOps.uac_bypass        = data.registry.uac_bypass?.Select(clean).ToList()        ?? new List<string>();
-            _registryOps.credential_access = data.registry.credential_access?.Select(clean).ToList() ?? new List<string>();
-        }
+    static async Task Sus_DirectoryEnum()
+    {
 
-        if (data.network != null)
-        {
-            _networkDomains  = data.network.suspicious_domains?.Select(d => d.ToLowerInvariant()).ToList() ?? new List<string>();
-            _suspiciousPorts = data.network.suspicious_ports ?? new List<int>();
-        }
+        string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        _suspiciousProcesses.Clear();
-        _suspiciousCommands.Clear();
-        if (data.processes != null)
+        string[] dirs =
         {
-            var all = (data.processes.lolbins ?? new List<string>())
-                      .Concat(data.processes.accessibility_binaries ?? new List<string>());
-            foreach (var p in all) _suspiciousProcesses.Add(p.ToLowerInvariant());
-            _suspiciousCommands = data.processes.suspicious_commands?.Select(c => c.ToLowerInvariant()).ToList() ?? new List<string>();
+            Path.Combine(localapp, "Google", "Chrome", "User Data"),
+            Path.Combine(localapp, "Microsoft", "Edge", "User Data"),
+            Path.Combine(appdata,  "Mozilla", "Firefox", "Profiles"),
+            Path.Combine(appdata,  "Microsoft", "Credentials"),
+            Path.Combine(appdata,  "Microsoft", "Protect"),
+            Path.Combine(home, ".ssh"),
+            Path.Combine(home, ".aws"),
+            Path.Combine(home, ".azure"),
+            Path.Combine(Environment.SystemDirectory, "config"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
+        };
+
+        Log("Checking if sensitive directories exist (no files opened)...");
+        foreach (var dir in dirs)
+        {
+            bool exists = Directory.Exists(dir);
+            Log($"  {(exists ? "[exists]" : "[absent]")} {dir}");
+            await Task.Delay(300);
         }
     }
-    public static void EvaluateFileOperation(int pid, string processName, string filePath, string eventType)
-    {
-        string lowerPath = filePath.ToLowerInvariant();
-        string fileName  = Path.GetFileName(lowerPath);
-        string match = null;
-        string category = "FileOperation";
 
-        if (eventType == "FileRead")
+    static async Task Sus_DiscoveryTools()
+    {
+
+        (string exe, string args)[] commands =
         {
-            match = _fileOps.suspicious_reads.FirstOrDefault(r => lowerPath.Contains(r));
-            if (match != null) category = "Sensitive File Read";
+            ("whoami.exe",     "/all"),
+            ("ipconfig.exe",   "/all"),
+            ("systeminfo.exe", ""),
+            ("netstat.exe",    "-an"),
+            ("tasklist.exe",   ""),
+            ("hostname.exe",   ""),
+        };
+
+        Log("Running system discovery commands...");
+        foreach (var (exe, args) in commands)
+        {
+            Log($"  Spawning {exe} {args}");
+            await Spawn(exe, args);
+            await Task.Delay(800);
         }
-        else if (eventType == "FileWrite" || eventType == "FileOpen")
+    }
+
+    static async Task Sus_ProcessSpawns()
+    {
+
+        Log("Spawning cmd.exe (no malicious payload)...");
+        await Spawn("cmd.exe", "/c echo System check complete");
+        await Task.Delay(1000);
+
+        Log("Spawning powershell.exe (no bypass flags)...");
+        await Spawn("powershell.exe",
+            "-Command \"Get-Date; Get-Process | Select-Object -First 5\"",
+            showWindow: true);
+        await Task.Delay(1500);
+
+        Log("Spawning certutil.exe (hash check only)...");
+        await Spawn("certutil.exe",
+            "-hashfile \"" + Environment.GetCommandLineArgs()[0] + "\" SHA256");
+        await Task.Delay(1000);
+    }
+
+    static async Task Sus_NetworkProbe()
+    {
+
+        Log("Making outbound HTTP connections...");
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        string[] urls =
         {
-            match = _fileOps.uncommon_writes.FirstOrDefault(r => lowerPath.Contains(r));
-            if (match != null) { category = "Uncommon Location Write"; }
-            else
+            "https://www.google.com",
+            "https://github.com",
+            "https://ipinfo.io/json",
+        };
+
+        foreach (var url in urls)
+        {
+            try   { _ = await http.GetStringAsync(url); Log($"  Connected: {url}"); }
+            catch { Log($"  (no route to {url})"); }
+            await Task.Delay(500);
+        }
+    }
+
+    static async Task Sus_RapidWrites()
+    {
+
+        string dir = Path.Combine(Drop, "scratch");
+        Directory.CreateDirectory(dir);
+
+        Log("Writing 20 temporary data files quickly...");
+        for (int i = 0; i < 20; i++)
+        {
+            string p = Path.Combine(dir, $"note_{i}.txt");
+            await File.WriteAllTextAsync(p, $"scratch data {i}");
+            await Task.Delay(60);
+        }
+        Log("  Done.");
+        await Task.Delay(500);
+    }
+
+    static async Task Inc_FileActivity()
+    {
+
+        string[] paths =
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+        };
+
+        Log("Checking ordinary user directories...");
+        foreach (var p in paths)
+        {
+            bool exists = Directory.Exists(p);
+            Log($"  {(exists ? "[exists]" : "[absent]")} {p}");
+            await Task.Delay(500);
+        }
+    }
+
+    static async Task Inc_SingleNetwork()
+    {
+        Log("Making a single HTTP request...");
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            _ = await http.GetStringAsync("https://www.google.com");
+            Log("  Connected to www.google.com");
+        }
+        catch { Log("  (no route)"); }
+        await Task.Delay(500);
+    }
+
+    static async Task Inc_TempWrites()
+    {
+
+        Log("Writing 3 temp files...");
+        for (int i = 0; i < 3; i++)
+        {
+            string p = Path.Combine(Drop, $"cache_{i}.dat");
+            await File.WriteAllTextAsync(p, $"cached value {i}");
+            Log($"  Wrote {p}");
+            await Task.Delay(400);
+        }
+    }
+
+    static async Task Inc_DirectoryChecks()
+    {
+
+        string[] dirs =
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Common Files"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Fonts"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft"),
+        };
+
+        Log("Checking common system directories...");
+        foreach (var dir in dirs)
+        {
+            bool exists = Directory.Exists(dir);
+            Log($"  {(exists ? "[exists]" : "[absent]")} {dir}");
+            await Task.Delay(400);
+        }
+    }
+
+    private static readonly List<string> _extraDirs = [];
+
+    static async Task Phase(string name, Func<Task> action)
+    {
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"  ── Phase {name}");
+        Console.ResetColor();
+        await action();
+    }
+
+    static void Log(string msg)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"     {msg}");
+        Console.ResetColor();
+    }
+
+    static async Task Spawn(string exe, string args, bool showWindow = false)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe, args)
             {
-                match = _fileOps.suspicious_overwrites.FirstOrDefault(r => lowerPath.Contains(r));
-                if (match != null) category = "Suspicious Bin Overwrite";
-            }
+                CreateNoWindow  = !showWindow,
+                UseShellExecute = false,
+            };
+            using var p = Process.Start(psi);
+            await Task.Run(() => p?.WaitForExit(5000));
         }
-
-        if (match != null) AddEventToProfile(pid, processName, category, match, filePath);
+        catch (Exception ex) { Log($"  [spawn failed] {exe}: {ex.Message}"); }
     }
 
-    public static void EvaluateRegistryAccess(int pid, string processName, string registryKey)
+    static async Task Cleanup()
     {
-        string lowerKey = registryKey.ToLowerInvariant();
-        string match = null;
-        string category = "";
-
-        if      ((match = _registryOps.persistence.FirstOrDefault(r => lowerKey.Contains(r)))       != null) category = "Registry Persistence";
-        else if ((match = _registryOps.tampering.FirstOrDefault(r => lowerKey.Contains(r)))         != null) category = "Registry Tampering";
-        else if ((match = _registryOps.uac_bypass.FirstOrDefault(r => lowerKey.Contains(r)))        != null) category = "Registry UAC Bypass";
-        else if ((match = _registryOps.credential_access.FirstOrDefault(r => lowerKey.Contains(r))) != null) category = "Registry Credential Access";
-
-        if (match != null) AddEventToProfile(pid, processName, category, match, registryKey);
-    }
-
-    public static void EvaluateProcessSpawn(int parentPid, string parentProcessName, int childPid, string childProcessName, string commandLine)
-    {
-        if (_suspiciousProcesses.Contains(childProcessName.ToLowerInvariant()))
-            AddEventToProfile(parentPid, parentProcessName, "SuspiciousProcessSpawn", childProcessName, $"Spawned: {childProcessName} (PID: {childPid})");
-
-        if (!string.IsNullOrEmpty(commandLine))
-        {
-            string lowerCmd = commandLine.ToLowerInvariant();
-            string match = _suspiciousCommands.FirstOrDefault(rule => lowerCmd.Contains(rule));
-            if (match != null) AddEventToProfile(parentPid, parentProcessName, "SuspiciousCommand", match, $"Command Line: {commandLine}");
-        }
-    }
-    public static void SaveToFile(string outputPath)
-    {
-        var lines = new List<string>();
-        int a = 1;
-        foreach (var profile in ActiveProfiles.Values)
-        {
-            lines.Add($"  Process #{a}");
-            lines.Add($"  Process Name : {profile.ProcessName}");
-            lines.Add($"  Process ID   : {profile.ProcessId}");
-            lines.Add($"  First Seen   : {profile.FirstSeen:yyyy-MM-dd HH:mm:ss}");
-            lines.Add($"  Total Events : {profile.EventTimeline.Count}");
-            a++;
-
-            if (profile.EventTimeline.Count == 0)
-            {
-                lines.Add("  No suspicious events recorded.");
-            }
-            else
-            {
-                int i = 1;
-                foreach (var ev in profile.EventTimeline.OrderBy(e => e.Timestamp))
-                {
-                    lines.Add($"  Event #{i}");
-                    lines.Add($"  Timestamp        : {ev.Timestamp:yyyy-MM-dd HH:mm:ss.fff}");
-                    lines.Add($"   Event Type       : {ev.EventType}");
-                    lines.Add($"   Matched Indicator: {ev.MatchedIndicator}");
-                    lines.Add($"   Raw Data         : {ev.RawData}");
-                    lines.Add("===========================================================");
-                    i++;
-                }
-            }
-
-            File.WriteAllLines(outputPath, lines);
-            Console.WriteLine($"[+] Profile dump saved to: {outputPath}");
-
-        }
-
-    }
-    public static void AddEventToProfile(int pid, string processName, string eventType, string matchedRule, string rawData)
-    {
-        var profile = ActiveProfiles.GetOrAdd(pid, newId => new ProcessProfile
-        {
-            ProcessId = newId,
-            ProcessName = processName,
-            FirstSeen = DateTime.Now
-        });
-
-        profile.EventTimeline.Add(new SuspiciousEvent
-        {
-            Timestamp = DateTime.Now,
-            EventType = eventType,
-            MatchedIndicator = matchedRule,
-            RawData = rawData
-        });
-
-        SaveToFile($"profile_{processName}_{pid}.txt");
-
-    }
-
-    public static void EvaluateNetworkConnection(Microsoft.Diagnostics.Tracing.Parsers.Kernel.TcpIpConnectTraceData data)
-    {
-        if (data.daddr == null) return;
-        string destIp = data.daddr.ToString();
-        int destPort = data.dport;
-        string processName = data.ProcessName ?? "";
-
-        bool isSuspiciousProcess = _suspiciousProcesses.Contains(processName.ToLowerInvariant());
-        bool isSuspiciousPort    = _suspiciousPorts.Contains(destPort);
-
-        if (isSuspiciousProcess || isSuspiciousPort)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[ALERT] Suspicious Network! {processName} (PID: {data.ProcessID}) -> {destIp}:{destPort}");
-            Console.ResetColor();
-            string rule = isSuspiciousPort ? $"Suspicious Port {destPort}" : "Suspicious Process Network";
-            AddEventToProfile(data.ProcessID, processName, "NetworkConnect", rule, $"Connected to {destIp}:{destPort}");
-        }
+        Console.WriteLine();
+        Log("Cleaning up...");
+        foreach (var dir in _extraDirs)
+            try { Directory.Delete(dir, recursive: true); } catch { }
+        try { Directory.Delete(Drop, recursive: true); } catch { }
+        await Task.CompletedTask;
     }
 }

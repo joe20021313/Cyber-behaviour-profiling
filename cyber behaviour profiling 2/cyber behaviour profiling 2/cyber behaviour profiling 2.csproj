@@ -14,4 +14,9 @@
     <PackageReference Include="WPF-UI.Abstractions" Version="4.2.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\Cyber-behaviour-profiling.csproj" />
+    <None Include="..\..\data.json" Link="data.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -295,3 +295,92 @@ public class ProcessProfileTests
         Assert.Equal("T1555", ev.TechniqueId);
     }
 }
+
+public class AnomalyDetectorTests
+{
+    static AnomalyDetectorTests() => TestSetup.Init();
+
+    private static ProcessProfile BuildProfileWithBaseline(double steadyWriteRate, int samples)
+    {
+        var p = ProfileFactory.Empty();
+
+        for (int i = 0; i < samples; i++)
+            p.AnomalyHistory.Add(new[] { steadyWriteRate, 0.0, 0.0, 0.0 });
+
+        for (int i = 0; i < samples; i++)
+            p.KnnScores.Add(0.01);
+
+        p.TotalFileWrites = (int)(steadyWriteRate * samples);
+        p.PrevFileWrites = p.TotalFileWrites;
+        p.PrevFileDeletes = 0;
+        p.PrevEventCount = 0;
+        p.PrevSnapshotTime = DateTime.Now.AddSeconds(-1);
+
+        return p;
+    }
+
+    [Fact]
+    public void NotEnoughSamples_NoAnomaly()
+    {
+        var p = ProfileFactory.Empty();
+        p.PrevSnapshotTime = DateTime.Now.AddSeconds(-2);
+        p.TotalFileWrites = 10;
+        var ctx = new ProcessContext { NetworkConnCount = 0 };
+
+        var result = AnomalyDetector.Evaluate(p, ctx);
+        Assert.False(result.AnomalyDetected);
+    }
+
+    [Fact]
+    public void SteadyBaseline_NoAnomaly()
+    {
+        var p = BuildProfileWithBaseline(steadyWriteRate: 5, samples: 8);
+        var ctx = new ProcessContext { NetworkConnCount = 0 };
+
+        p.TotalFileWrites += 5;
+        var result = AnomalyDetector.Evaluate(p, ctx);
+        Assert.False(result.AnomalyDetected);
+    }
+
+    [Fact]
+    public void SpikeAfterBaseline_DetectsAnomaly()
+    {
+        var p = BuildProfileWithBaseline(steadyWriteRate: 5, samples: 8);
+        var ctx = new ProcessContext { NetworkConnCount = 0 };
+
+        p.TotalFileWrites += 500;
+        var result = AnomalyDetector.Evaluate(p, ctx);
+        Assert.True(result.AnomalyDetected,
+            $"Score={result.Score}, KnnDist={result.KnnDistance:F4}, Threshold={result.Threshold:F4}, " +
+            $"History={p.AnomalyHistory.Count}, KnnScores={p.KnnScores.Count}");
+    }
+
+    [Fact]
+    public void AnomalyScore_ClampedInRange()
+    {
+        var p = BuildProfileWithBaseline(steadyWriteRate: 5, samples: 8);
+        var ctx = new ProcessContext { NetworkConnCount = 0 };
+
+        p.TotalFileWrites += 500;
+        var result = AnomalyDetector.Evaluate(p, ctx);
+        Assert.True(result.Score >= 15 && result.Score <= 45,
+            $"Score={result.Score}, Detected={result.AnomalyDetected}, KnnDist={result.KnnDistance:F4}");
+    }
+
+    [Fact]
+    public void AnomalyResult_FeedsIntoBehaviorReport()
+    {
+        var report = new BehaviorReport();
+        var anomaly = new AnomalyResult
+        {
+            AnomalyDetected = true,
+            Score = 30,
+            SpikedMetrics = new List<string> { "File Write Rate: 50.0/sec (baseline: 5.0/sec)" }
+        };
+        report.Anomaly = anomaly;
+
+        Assert.NotNull(report.Anomaly);
+        Assert.True(report.Anomaly.AnomalyDetected);
+        Assert.Equal(30, report.Anomaly.Score);
+    }
+}

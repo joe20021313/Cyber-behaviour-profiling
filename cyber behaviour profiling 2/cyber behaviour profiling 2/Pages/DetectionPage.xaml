@@ -89,14 +89,15 @@
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
+            <!-- LEFT: RESULT PANEL -->
             <Border Style="{StaticResource PanelCard}" Margin="0,0,12,0" Padding="20,22,20,18">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SectionLabel}"
-                               Text="THREAT SCORE"
+                               Text="RESULT"
                                HorizontalAlignment="Center" Margin="0,0,0,10"/>
 
                     <TextBlock x:Name="ScoreLabel"
-                               Text="0" FontSize="76" FontWeight="Bold"
+                               Text="READY" FontSize="42" FontWeight="Bold"
                                HorizontalAlignment="Center"
                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                                Margin="0,0,0,10"/>
@@ -111,8 +112,31 @@
                                    Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                     </Border>
 
-                    <Grid x:Name="ScoreBarContainer" Height="14"
-                          SizeChanged="ScoreBarContainer_SizeChanged">
+                    <TextBlock x:Name="ResultSummaryText"
+                               Text="Enter a process name and start monitoring."
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               FontSize="12"
+                               Margin="0,0,0,18"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+                    <ui:Button x:Name="DownloadReportButton"
+                               Content="Download Report"
+                               Appearance="Secondary"
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,14"
+                               Visibility="Collapsed"
+                               Click="DownloadReport_Click"/>
+
+                    <ui:Button x:Name="DownloadMetadataButton"
+                               Content="Download Lifecycle Metadata"
+                               Appearance="Secondary"
+                               HorizontalAlignment="Center"
+                               Margin="0,0,0,14"
+                               Visibility="Collapsed"
+                               Click="DownloadMetadata_Click"/>
+
+                    <Grid x:Name="ScoreBarContainer" Height="14" Visibility="Collapsed">
                         <Border CornerRadius="7" Opacity="0.2">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
@@ -135,23 +159,17 @@
                             </Border.Background>
                         </Border>
                     </Grid>
-
-                    <Grid Margin="0,5,0,0">
-                        <TextBlock Text="0"    FontSize="9" HorizontalAlignment="Left"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock Text="300+" FontSize="9" HorizontalAlignment="Right"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    </Grid>
-
                 </StackPanel>
             </Border>
 
+            <!-- RIGHT: EVENTS + DETAIL -->
             <Grid Grid.Column="1">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition x:Name="DetailRowDef" Height="0"/>
                 </Grid.RowDefinitions>
 
+                <!-- ACTIVITY TILES -->
                 <Border Style="{StaticResource PanelCard}" Padding="16">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -160,10 +178,10 @@
                         </Grid.RowDefinitions>
 
                         <TextBlock Style="{StaticResource SectionLabel}"
-                                   Text="EVENTS" Margin="0,0,0,12"/>
+                                   Text="ACTIVITY" Margin="0,0,0,12"/>
 
                         <TextBlock x:Name="EmptyEventsText" Grid.Row="1"
-                                   Text="No events yet — start monitoring a process."
+                                   Text="No events yet -- start monitoring a process."
                                    FontSize="13" VerticalAlignment="Center" HorizontalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
@@ -192,20 +210,17 @@
                                                         <RowDefinition Height="*"/>
                                                         <RowDefinition Height="Auto"/>
                                                     </Grid.RowDefinitions>
-                                                    <TextBlock Text="{Binding EventType}"
-                                                               FontSize="11" FontWeight="SemiBold"
-                                                               TextWrapping="Wrap"
+                                                    <TextBlock Text="{Binding DisplayLabel}"
+                                                               FontSize="13" FontWeight="SemiBold"
+                                                               VerticalAlignment="Center"
                                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <StackPanel Grid.Row="1" Orientation="Horizontal">
-                                                        <Border Background="{Binding CategoryBrush}"
-                                                                CornerRadius="3" Padding="5,1" Margin="0,0,6,0">
-                                                            <TextBlock Text="{Binding ShortCategory}"
-                                                                       FontSize="9" Foreground="White"
+                                                        <Border Background="{Binding TileBrush}"
+                                                                CornerRadius="3" Padding="5,2" Margin="0,0,6,0">
+                                                            <TextBlock Text="{Binding CountLabel}"
+                                                                       FontSize="10" Foreground="White"
                                                                        FontWeight="SemiBold"/>
                                                         </Border>
-                                                        <TextBlock Text="{Binding CountLabel}"
-                                                                   FontSize="11" VerticalAlignment="Center"
-                                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
@@ -216,6 +231,8 @@
                         </ScrollViewer>
                     </Grid>
                 </Border>
+
+                <!-- DETAIL PANEL (shown when tile is clicked) -->
                 <Border Grid.Row="1" Style="{StaticResource PanelCard}"
                         Margin="0,10,0,0" Padding="16">
                     <Grid>
@@ -227,9 +244,9 @@
                         <DockPanel Margin="0,0,0,10">
                             <TextBlock x:Name="DetailTitle"
                                        Style="{StaticResource SectionLabel}"
-                                       Text="TIMELINE" VerticalAlignment="Center"
+                                       Text="DETAILS" VerticalAlignment="Center"
                                        DockPanel.Dock="Left"/>
-                            <Button Content="✕" DockPanel.Dock="Right"
+                            <Button Content="X" DockPanel.Dock="Right"
                                     Background="Transparent" BorderThickness="0"
                                     Padding="6,2" FontSize="12"
                                     HorizontalAlignment="Right"
@@ -241,27 +258,34 @@
                             <ItemsControl x:Name="TimelineList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Margin="0,0,0,8">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="65"/>
-                                                <ColumnDefinition Width="18"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Time}"
-                                                       FontSize="10" HorizontalAlignment="Right"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                            <Ellipse Grid.Column="1"
-                                                     Width="7" Height="7"
-                                                     Fill="{DynamicResource AccentFillColorDefaultBrush}"
-                                                     HorizontalAlignment="Center"
-                                                     VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2"
-                                                       Text="{Binding Raw}"
-                                                       FontSize="11" TextWrapping="Wrap"
-                                                       VerticalAlignment="Center" Margin="5,0,0,0"
-                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                        </Grid>
+                                        <Border Margin="0,0,0,5" Padding="10,7" CornerRadius="6"
+                                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding ShortName}"
+                                                           FontSize="11" TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"
+                                                           ToolTip="{Binding FullDetail}"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding CountLabel}"
+                                                           FontSize="11" FontWeight="SemiBold"
+                                                           Margin="10,0,0,0"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding TimeDisplay}"
+                                                           FontSize="10" Margin="10,0,0,0"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                            </Grid>
+                                        </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -276,16 +300,15 @@
                 Background="#99000000" Visibility="Collapsed"
                 MouseDown="GreyOverlay_MouseDown"/>
 
-        <!-- EXPANDABLE REPORT CARD -->
+        <!-- EXPANDABLE TIMELINE PANEL -->
         <Border Grid.Row="2" Style="{StaticResource PanelCard}" Margin="0,10,0,0">
             <StackPanel>
 
-                <!-- Clickable header strip -->
                 <Button Style="{StaticResource TileButton}" Cursor="Hand"
                         Click="ReportHeader_Click">
                     <DockPanel Margin="16,12">
                         <TextBlock Style="{StaticResource SectionLabel}"
-                                   Text="Timeline of Events" VerticalAlignment="Center"
+                                   Text="TIMELINE" VerticalAlignment="Center"
                                    DockPanel.Dock="Left"/>
                         <TextBlock x:Name="ReportChevron" Text="^"
                                    FontSize="9" VerticalAlignment="Center"
@@ -295,7 +318,6 @@
                     </DockPanel>
                 </Button>
 
-                <!-- Animated content (MaxHeight goes 0 → 260) -->
                 <Border x:Name="ReportCardContent" MaxHeight="0" ClipToBounds="True">
                     <Grid Margin="16,0,16,14" Height="220">
                         <Grid.RowDefinitions>
@@ -306,32 +328,35 @@
                             <ItemsControl x:Name="ReportList">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Margin="0,0,0,8" Padding="12,8" CornerRadius="6"
-                                                Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                                                BorderThickness="1">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Border Background="{Binding CategoryBrush}"
-                                                CornerRadius="3" Padding="6,2" Margin="0,0,10,0"
-                                                VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding ShortCategory}"
-                                                       FontSize="9" Foreground="White" FontWeight="SemiBold"/>
-                                        </Border>
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding EventType}"
-                                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding CountLabel}"
-                                                   FontSize="12" VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <Grid Margin="0,0,0,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="58"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Time}"
+                                                       FontSize="10" FontFamily="Consolas"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                            <Border Grid.Column="1" Background="{Binding ActivityBrush}"
+                                                    CornerRadius="3" Padding="5,1" Margin="8,0,8,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Label}"
+                                                           FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding Detail}"
+                                                       FontSize="11" TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Grid.Column="3"
+                                                       Text="{Binding CountLabel}"
+                                                       FontSize="10" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                         </Grid>
-                                        </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

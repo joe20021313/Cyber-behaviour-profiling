@@ -1,0 +1,118 @@
+<Page x:Class="cyber_behaviour_profiling_2.Pages.ReportsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Title="Reports"
+      Background="{DynamicResource ApplicationBackgroundBrush}">
+
+    <Page.Resources>
+        <Style x:Key="PanelCard" TargetType="Border">
+            <Setter Property="CornerRadius"    Value="10"/>
+            <Setter Property="Background"      Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+        <Style x:Key="SectionLabel" TargetType="TextBlock">
+            <Setter Property="FontSize"   Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+        </Style>
+    </Page.Resources>
+
+    <Grid Margin="20,14,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- HEADER -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="PAST REPORTS"
+                       Style="{StaticResource SectionLabel}"
+                       FontSize="14"
+                       VerticalAlignment="Center"
+                       DockPanel.Dock="Left"/>
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        DockPanel.Dock="Right">
+                <ui:Button Content="Refresh"
+                           Appearance="Secondary"
+                           Margin="0,0,8,0"
+                           Click="Refresh_Click"/>
+                <ui:Button Content="Open Folder"
+                           Appearance="Secondary"
+                           Click="OpenFolder_Click"/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- REPORT LIST -->
+        <Border Grid.Row="1" Style="{StaticResource PanelCard}" Padding="16">
+            <Grid>
+                <TextBlock x:Name="EmptyText"
+                           Text="No reports found. Monitor a process and stop to generate a report."
+                           FontSize="13" VerticalAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="ReportsList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,0,0,6" Padding="14,10" CornerRadius="8"
+                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        Cursor="Hand"
+                                        MouseLeftButtonUp="ReportItem_Click"
+                                        Tag="{Binding FilePath}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding FileName}"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding DateDisplay}"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Target}"
+                                                   FontSize="12"
+                                                   VerticalAlignment="Center"
+                                                   Margin="12,0"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+                                        <Border Grid.Column="2"
+                                                Background="{Binding GradeBrush}"
+                                                CornerRadius="4" Padding="10,3"
+                                                VerticalAlignment="Center"
+                                                Margin="0,0,12,0">
+                                            <TextBlock Text="{Binding Grade}"
+                                                       FontSize="10" FontWeight="Bold"
+                                                       Foreground="White"/>
+                                        </Border>
+
+                                        <ui:Button Grid.Column="3"
+                                                   Content="✕"
+                                                   Appearance="Secondary"
+                                                   Padding="6,2"
+                                                   FontSize="10"
+                                                   VerticalAlignment="Center"
+                                                   Tag="{Binding FilePath}"
+                                                   Click="DeleteReport_Click"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+</Page>

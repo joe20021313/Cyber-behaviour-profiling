@@ -15,6 +15,7 @@ public partial class Program
 {
     private static List<string> logEntries = new List<string>();
     private static object logLock = new object();
+    private static Cyber_behaviour_profiling.DirectorySnapshot? _baselineSnapshot;
 
     public static void Main(string[] args)
     {
@@ -63,6 +64,7 @@ public partial class Program
                             merged.WriteDirectories.AddOrUpdate(kvp.Key, kvp.Value, (_, c) => c + kvp.Value);
                         Interlocked.Add(ref merged.TotalFileWrites, p.TotalFileWrites);
                         Interlocked.Add(ref merged.TotalFileDeletes, p.TotalFileDeletes);
+                        merged.AnomalyHistory.AddRange(p.AnomalyHistory);
                     }
                     return merged;
                 })
@@ -70,10 +72,28 @@ public partial class Program
 
             foreach (var profile in mergedProfiles)
             {
+                profile.DirectorySnapshotBefore = _baselineSnapshot;
                 var finalReport = BehaviorAnalyzer.Analyze(profile);
                 var narrative   = AttackNarrator.BuildNarrative(profile, finalReport);
                 AttackNarrator.PrintNarrative(narrative);
             }
+
+            try
+            {
+                string metadataText = MetadataExporter.Generate(mergedProfiles.ToList());
+                string metadataPath = Path.Combine(AppContext.BaseDirectory, "lifecycle_metadata.txt");
+                File.WriteAllText(metadataPath, metadataText, System.Text.Encoding.UTF8);
+                Console.ForegroundColor = ConsoleColor.DarkCyan;
+                Console.WriteLine($"\n  Lifecycle metadata saved to: {metadataPath}");
+                Console.ResetColor();
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine($"\n  Could not save lifecycle metadata: {ex.Message}");
+                Console.ResetColor();
+            }
+
             Environment.Exit(0);
         };
 
@@ -102,7 +122,7 @@ public partial class Program
         }
     }
 
-    static void ProcessSysmonEvent(EventRecord record, string targetProcess)
+    public static void ProcessSysmonEvent(EventRecord record, string targetProcess)
     {
         try
         {
@@ -154,6 +174,18 @@ public partial class Program
     public static void MonitorProcess(string targetProcess)
     {
         MapToData.LoadData("data.json");
+
+        try
+        {
+            Cyber_behaviour_profiling.InvestigationLog.Section("CONSOLE SESSION START — BASELINE SNAPSHOT");
+            var monitoredDirs = Cyber_behaviour_profiling.SystemDiscovery.GetMonitoredDirectories(
+                MapToData.SensitiveDirs as IReadOnlyList<string>);
+            _baselineSnapshot = Cyber_behaviour_profiling.SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
+        }
+        catch (Exception ex)
+        {
+            Cyber_behaviour_profiling.InvestigationLog.Write($"Baseline snapshot failed: {ex.Message}");
+        }
 
         var monitoredPids = new HashSet<uint>();
         foreach (var p in Process.GetProcessesByName(targetProcess))
@@ -358,8 +390,21 @@ public partial class Program
 
 public class MappedRule
 {
-    public string Pattern  { get; set; } = "";
-    public string Category { get; set; } = "";
+    public string Pattern     { get; set; } = "";
+    public string Category    { get; set; } = "";
+    public string Description { get; set; } = "";
+}
+
+public class NamedIndicator
+{
+    public string name        { get; set; } = "";
+    public string description { get; set; } = "";
+}
+
+public class CommandIndicator
+{
+    public string pattern     { get; set; } = "";
+    public string description { get; set; } = "";
 }
 
 public class SuspiciousEvent
@@ -391,6 +436,16 @@ public class ProcessProfile
     public ConcurrentBag<(string ChildName, string CommandLine)> SpawnedCommandLines { get; set; } = new();
     public int TotalFileWrites;
     public int TotalFileDeletes;
+
+    public List<double[]> AnomalyHistory { get; set; } = new();
+    public List<double> KnnScores { get; set; } = new();
+    public int PrevFileWrites;
+    public int PrevFileDeletes;
+    public int PrevEventCount;
+    public DateTime PrevSnapshotTime = DateTime.MinValue;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DirectorySnapshot? DirectorySnapshotBefore { get; set; }
 }
 
 public class FileOperationsData
@@ -418,9 +473,9 @@ public class NetworkData
 
 public class ProcessesData
 {
-    public List<string> lolbins                { get; set; }
-    public List<string> accessibility_binaries { get; set; }
-    public List<string> suspicious_commands    { get; set; }
+    public List<NamedIndicator>   lolbins                { get; set; }
+    public List<NamedIndicator>   accessibility_binaries { get; set; }
+    public List<CommandIndicator> suspicious_commands    { get; set; }
 }
 
 public class ThreatData
@@ -429,7 +484,7 @@ public class ThreatData
     public RegistryData               registry                 { get; set; }
     public NetworkData                network                  { get; set; }
     public ProcessesData              processes                { get; set; }
-    public List<string>               discovery_commands       { get; set; }
+    public List<NamedIndicator>       discovery_commands       { get; set; }
     public Dictionary<string, int>    tactic_weights           { get; set; }
     public List<KillChainRule>        kill_chains              { get; set; }
     public ScoringConfig              scoring                  { get; set; }
@@ -484,6 +539,7 @@ public class ConfirmationChain
 
 public class ProcessTrustData
 {
+    public List<string>? trusted_publishers  { get; set; }
     public TrustCategory trusted_system     { get; set; }
     public TrustCategory trusted_user_apps  { get; set; }
     public TrustCategory shell_interpreters { get; set; }
@@ -499,6 +555,8 @@ public class TrustCategory
 
 public static class MapToData
 {
+    public static event Action<Cyber_behaviour_profiling.MonitoringEventUpdate>? SuspiciousEventObserved;
+
     private static List<MappedRule> _registryRules = new();
     private static List<MappedRule> _writeRules     = new();
     private static List<MappedRule> _overwriteRules = new();
@@ -507,8 +565,14 @@ public static class MapToData
     private static List<MappedRule> _commandRules   = new();
     private static List<MappedRule> _discoveryRules = new();
 
+    public static IReadOnlyList<MappedRule> LolbinRules    => _lolbinRules;
+    public static IReadOnlyList<MappedRule> CommandRules   => _commandRules;
+    public static IReadOnlyList<MappedRule> DiscoveryRules => _discoveryRules;
+
     private static List<string> _sensitiveDirs  = new();
     private static List<string> _sensitiveFiles = new();
+
+    public static IReadOnlyList<string> SensitiveDirs => _sensitiveDirs;
 
     public static List<string>   _networkDomains  = new();
     public static ConcurrentDictionary<int, ProcessProfile> ActiveProfiles    = new();
@@ -524,6 +588,7 @@ public static class MapToData
     public static List<string>               _trustedUserApps         = new();
     public static Dictionary<string, double> _processTrustMultipliers = new(StringComparer.OrdinalIgnoreCase);
     public static HashSet<string>            _blacklistedProcesses    = new(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<string>            _trustedPublishers       = new(StringComparer.OrdinalIgnoreCase);
     public static List<string>               _contextSignalPaths      = new();
 
     private static volatile bool _profilesDirty = false;
@@ -532,8 +597,89 @@ public static class MapToData
         if (_profilesDirty) { _profilesDirty = false; SaveToFile("profiles.json"); }
     }, null, 5000, 5000);
 
-    private static MappedRule R(string pattern, string category) =>
-        new() { Pattern = pattern.ToLowerInvariant(), Category = category };
+    public static void ResetSession()
+    {
+        ActiveProfiles.Clear();
+        _recentDnsQueries.Clear();
+        _profilesDirty = false;
+    }
+
+    public static void TakeAnomalySnapshot()
+    {
+        foreach (var profile in ActiveProfiles.Values)
+        {
+            var now = DateTime.Now;
+            double elapsed = profile.PrevSnapshotTime == DateTime.MinValue
+                ? 0
+                : (now - profile.PrevSnapshotTime).TotalSeconds;
+
+            if (elapsed < 0.5)
+            {
+                if (profile.PrevSnapshotTime == DateTime.MinValue)
+                {
+                    profile.PrevFileWrites  = profile.TotalFileWrites;
+                    profile.PrevFileDeletes = profile.TotalFileDeletes;
+                    profile.PrevEventCount  = profile.EventTimeline.Count;
+                    profile.PrevSnapshotTime = now;
+                }
+                continue;
+            }
+
+            double writeRate  = (profile.TotalFileWrites  - profile.PrevFileWrites)  / elapsed;
+            double deleteRate = (profile.TotalFileDeletes - profile.PrevFileDeletes) / elapsed;
+            double eventRate  = (profile.EventTimeline.Count - profile.PrevEventCount) / elapsed;
+            double netConns   = 0;
+
+            profile.AnomalyHistory.Add(new[] { writeRate, deleteRate, eventRate, netConns });
+
+            profile.PrevFileWrites  = profile.TotalFileWrites;
+            profile.PrevFileDeletes = profile.TotalFileDeletes;
+            profile.PrevEventCount  = profile.EventTimeline.Count;
+            profile.PrevSnapshotTime = now;
+        }
+    }
+
+    public static List<ProcessProfile> GetMergedProfiles()
+    {
+        return ActiveProfiles.Values
+            .GroupBy(p => p.ProcessName?.ToLowerInvariant() ?? "")
+            .Select(g =>
+            {
+                var primary = g.OrderByDescending(p => p.EventTimeline.Count).First();
+                if (g.Count() == 1) return primary;
+
+                var merged = new ProcessProfile
+                {
+                    ProcessId   = primary.ProcessId,
+                    ProcessName = primary.ProcessName,
+                    FirstSeen   = g.Min(p => p.FirstSeen),
+                };
+
+                foreach (var p in g)
+                {
+                    foreach (var ev in p.EventTimeline)
+                        merged.EventTimeline.Add(ev);
+                    foreach (var path in p.ExeDropPaths)
+                        merged.ExeDropPaths.Add(path);
+                    foreach (var path in p.DeletedPaths)
+                        merged.DeletedPaths.Add(path);
+                    foreach (var cmd in p.SpawnedCommandLines)
+                        merged.SpawnedCommandLines.Add(cmd);
+                    foreach (var kvp in p.WriteDirectories)
+                        merged.WriteDirectories.AddOrUpdate(kvp.Key, kvp.Value, (_, c) => c + kvp.Value);
+                    Interlocked.Add(ref merged.TotalFileWrites, p.TotalFileWrites);
+                    Interlocked.Add(ref merged.TotalFileDeletes, p.TotalFileDeletes);
+                    merged.AnomalyHistory.AddRange(p.AnomalyHistory);
+                }
+
+                return merged;
+            })
+            .OrderByDescending(p => p.EventTimeline.Count)
+            .ToList();
+    }
+
+    private static MappedRule R(string pattern, string category, string description = "") =>
+        new() { Pattern = pattern.ToLowerInvariant(), Category = category, Description = description };
 
     private static string NormalizeRegKey(string key) =>
         key.Replace("HKCU\\", "")
@@ -578,17 +724,17 @@ public static class MapToData
 
         _lolbinRules.Clear();
         foreach (var p in data.processes?.lolbins ?? new())
-            _lolbinRules.Add(R(p, "process_lolbin"));
+            _lolbinRules.Add(R(p.name, "process_lolbin", p.description));
         foreach (var p in data.processes?.accessibility_binaries ?? new())
-            _lolbinRules.Add(R(p, "process_accessibility"));
+            _lolbinRules.Add(R(p.name, "process_accessibility", p.description));
 
         _commandRules.Clear();
         foreach (var c in data.processes?.suspicious_commands ?? new())
-            _commandRules.Add(R(c, "process_defense_evasion"));
+            _commandRules.Add(R(c.pattern, "process_defense_evasion", c.description));
 
         _discoveryRules.Clear();
         foreach (var c in data.discovery_commands ?? new())
-            _discoveryRules.Add(R(c, "process_discovery"));
+            _discoveryRules.Add(R(c.name, "process_discovery", c.description));
 
         _processTrustMultipliers.Clear();
         void RegisterTrust(TrustCategory? cat)
@@ -607,6 +753,7 @@ public static class MapToData
         foreach (var p in data.process_trust?.blacklisted?.processes ?? new())
             _blacklistedProcesses.Add(p.ToLowerInvariant());
 
+        _trustedPublishers = new HashSet<string>(data.process_trust?.trusted_publishers ?? new(), StringComparer.OrdinalIgnoreCase);
         _trustedSystem   = data.process_trust?.trusted_system?.processes?.Select(p => p.ToLowerInvariant()).ToList() ?? new();
         _trustedUserApps = data.process_trust?.trusted_user_apps?.processes?.Select(p => p.ToLowerInvariant()).ToList() ?? new();
 
@@ -632,7 +779,7 @@ public static class MapToData
             ProcessId = id, ProcessName = processName, FirstSeen = DateTime.Now
         });
 
-        if (eventType == "FileWrite" || eventType == "FileOpen")
+        if (eventType == "FileWrite")
         {
             profile.TotalFileWrites++;
             string dir = Path.GetDirectoryName(lowerPath) ?? "";
@@ -642,7 +789,9 @@ public static class MapToData
         if (eventType == "FileDelete")
         {
             profile.TotalFileDeletes++;
-            profile.DeletedPaths.Add(filePath);
+            if (!fileName.StartsWith("__psscriptpolicytest_") &&
+                !fileName.StartsWith("__pssessionconfigurationtest_"))
+                profile.DeletedPaths.Add(filePath);
         }
 
         if (eventType == "FileWrite")
@@ -651,7 +800,12 @@ public static class MapToData
             if (ext is ".exe" or ".dll" or ".scr" or ".pif"
                     or ".bat" or ".ps1" or ".cmd" or ".vbs" or ".hta" or ".wsf")
             {
-                profile.ExeDropPaths.Add(filePath);
+                bool isBenignDrop =
+                    fileName.StartsWith("__psscriptpolicytest_") ||
+                    fileName.StartsWith("__pssessionconfigurationtest_");
+
+                if (!isBenignDrop)
+                    profile.ExeDropPaths.Add(filePath);
 
                 bool isSuspiciousDropPath =
                     lowerPath.Contains(@"\appdata\") ||
@@ -667,12 +821,8 @@ public static class MapToData
                     lowerPath.Contains(@"\windows\system32\") ||
                     lowerPath.Contains(@"\windows\syswow64\");
 
-                bool isBenignDrop =
-                    fileName.StartsWith("__psscriptpolicytest_") ||
-                    fileName.StartsWith("__pssessionconfigurationtest_");
-
                 if (isSuspiciousDropPath && !isLegitimateDropPath && !isBenignDrop)
-                    AddEventToProfile(pid, processName, "Executable Drop", ext, filePath, "file_exe_drop");
+                    AddEventToProfile(pid, processName, "Executable Drop", ext, filePath, "file_exe_drop", "FileWrite");
             }
         }
 
@@ -682,33 +832,37 @@ public static class MapToData
             string? fileMatch = _sensitiveFiles.FirstOrDefault(f => fileName.Contains(f) || lowerPath.EndsWith(f));
             if (fileMatch != null)
             {
-                AddEventToProfile(pid, processName, eventType, fileMatch, filePath, "credential_file_access");
+                AddEventToProfile(pid, processName, eventType, fileMatch, filePath, "credential_file_access", eventType);
             }
             else
             {
-
                 if (dirMatch.Contains("\\appdata\\local\\packages\\"))
                     return;
 
-                AddEventToProfile(pid, processName, "SensitiveDirAccess", dirMatch, filePath, "collection");
+                if (eventType != "FileRead")
+                    return;
+
+                if (lowerPath.Contains(@"\program files\putty\") ||
+                    lowerPath.Contains(@"\windows\system32\openssh\"))
+                    return;
+
+                AddEventToProfile(pid, processName, "SensitiveDirAccess", dirMatch, filePath, "collection", eventType);
             }
             return;
         }
 
-        if (eventType == "FileWrite" || eventType == "FileOpen")
+        if (eventType == "FileWrite")
         {
-
             var contextMatch = _contextSignalPaths.FirstOrDefault(p => lowerPath.Contains(p));
             if (contextMatch != null)
             {
-                AddEventToProfile(pid, processName, "ContextSignal", contextMatch, filePath, "context_signal");
+                AddEventToProfile(pid, processName, "ContextSignal", contextMatch, filePath, "context_signal", eventType);
                 return;
             }
 
             var writeRule = _writeRules.FirstOrDefault(w => lowerPath.Contains(w.Pattern));
             if (writeRule != null)
             {
-
                 if (writeRule.Pattern.Contains("fonts"))
                 {
                     string ext = Path.GetExtension(lowerPath);
@@ -716,7 +870,7 @@ public static class MapToData
                         return;
                 }
 
-                AddEventToProfile(pid, processName, "UncommonWrite", writeRule.Pattern, filePath, writeRule.Category);
+                AddEventToProfile(pid, processName, "UncommonWrite", writeRule.Pattern, filePath, writeRule.Category, eventType);
                 return;
             }
         }
@@ -724,7 +878,7 @@ public static class MapToData
         var overwriteRule = _overwriteRules.FirstOrDefault(o => fileName.Contains(o.Pattern));
         if (overwriteRule != null)
         {
-            AddEventToProfile(pid, processName, "AccessibilityBinaryOverwrite", overwriteRule.Pattern, filePath, overwriteRule.Category);
+            AddEventToProfile(pid, processName, "AccessibilityBinaryOverwrite", overwriteRule.Pattern, filePath, overwriteRule.Category, eventType);
         }
     }
 
@@ -739,7 +893,7 @@ public static class MapToData
         var rule = _registryRules.FirstOrDefault(r => lowerKey.Contains(r.Pattern));
         if (rule == null) return;
 
-        if (rule.Category == "registry_defense_evasion" && operation == "Open")
+        if ((rule.Category == "registry_defense_evasion" || rule.Category == "registry_persistence") && operation == "Open")
             return;
 
         if (rule.Pattern == "system\\currentcontrolset\\services" && operation == "Open")
@@ -754,7 +908,7 @@ public static class MapToData
             if (benignPrefixes.Any(p => lowerKey.Contains(p))) return;
         }
 
-        AddEventToProfile(pid, processName, "Registry", rule.Pattern, registryKey, rule.Category);
+        AddEventToProfile(pid, processName, "Registry", rule.Pattern, registryKey, rule.Category, "Registry");
     }
 
     public static void EvaluateProcessSpawn(int parentPid, string parentProcessName,
@@ -773,7 +927,7 @@ public static class MapToData
             _blacklistedProcesses.Contains(lowerChild + ".exe"))
         {
             AddEventToProfile(parentPid, parentProcessName, "BlacklistedProcess", childProcessName,
-                childProcessName, "process_blacklisted");
+                childProcessName, "process_blacklisted", "Process");
         }
 
         var lolbinRule = _lolbinRules.FirstOrDefault(r =>
@@ -782,14 +936,14 @@ public static class MapToData
         if (lolbinRule != null)
         {
             AddEventToProfile(parentPid, parentProcessName, "ProcessSpawn", childProcessName,
-                childProcessName, lolbinRule.Category);
+                childProcessName, lolbinRule.Category, "Process");
         }
 
         var discoveryRule = _discoveryRules.FirstOrDefault(r => lowerChild.Contains(r.Pattern));
         if (discoveryRule != null)
         {
             AddEventToProfile(parentPid, parentProcessName, "DiscoverySpawn", childProcessName,
-                childProcessName, discoveryRule.Category);
+                childProcessName, discoveryRule.Category, "Process");
         }
 
         if (!string.IsNullOrEmpty(commandLine))
@@ -799,7 +953,7 @@ public static class MapToData
             if (cmdRule != null)
             {
                 AddEventToProfile(parentPid, parentProcessName, "SuspiciousCommand", cmdRule.Pattern,
-                    commandLine, cmdRule.Category);
+                    commandLine, cmdRule.Category, "Process");
             }
         }
     }
@@ -816,12 +970,18 @@ public static class MapToData
         if (netRule != null)
         {
             AddEventToProfile(pid, processName, "NetworkConnect", netRule.Pattern,
-                fullDest, netRule.Category);
+                fullDest, netRule.Category, "Network");
+        }
+        else if (destination is not ("127.0.0.1" or "::1" or "0.0.0.0" or "localhost"))
+        {
+            string indicator = knownDomain ?? destination;
+            AddEventToProfile(pid, processName, "NetworkConnect", indicator,
+                fullDest, "network_outbound", "Network");
         }
     }
 
     public static void AddEventToProfile(int pid, string processName, string eventType,
-        string matchedRule, string rawData, string category = "")
+        string matchedRule, string rawData, string category = "", string activityType = "")
     {
         var profile = ActiveProfiles.GetOrAdd(pid, newId => new ProcessProfile
         {
@@ -857,6 +1017,19 @@ public static class MapToData
             profile.EventTimeline.Add(ev);
             profile.DedupCache[fingerprint] = ev;
         }
+
+        var updateEvent = profile.DedupCache[fingerprint];
+        SuspiciousEventObserved?.Invoke(new Cyber_behaviour_profiling.MonitoringEventUpdate
+        {
+            ProcessId = pid,
+            ProcessName = processName,
+            EventType = eventType,
+            Category = category,
+            RawData = rawData,
+            ActivityType = activityType,
+            Timestamp = updateEvent.LastSeen,
+            AttemptCount = updateEvent.AttemptCount
+        });
 
         _profilesDirty = true;
 

@@ -23,6 +23,7 @@
             <ui:NavigationView.MenuItems>
                 <ui:NavigationViewItem Name="DashboardItem" Content="Dashboard" Tag="Dashboard" />
                 <ui:NavigationViewItem Name="RulesItem"     Content="Rules"     Tag="Rules"     />
+                <ui:NavigationViewItem Name="ReportsItem"   Content="Reports"   Tag="Reports"   />
                 <ui:NavigationViewItem Name="SettingsItem"  Content="Settings"  Tag="Settings"  />
             </ui:NavigationView.MenuItems>
         </ui:NavigationView>

@@ -6,6 +6,13 @@ using System.Windows.Media;
 
 namespace cyber_behaviour_profiling_2.Pages
 {
+    public class CustomRule
+    {
+        public string EventType { get; set; } = "Any";
+        public string Keyword { get; set; } = "";
+        public string Message { get; set; } = "";
+    }
+
     public partial class RulesPage : Page
     {
         private static readonly (string Name, Color Color)[] EventTypes =

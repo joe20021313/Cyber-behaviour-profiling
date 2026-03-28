@@ -1,0 +1,437 @@
+[
+  {
+    "ProcessId": 53356,
+    "ProcessName": "cmd",
+    "FirstSeen": "2026-03-28T01:27:06.395039+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 68876,
+    "ProcessName": "conhost",
+    "FirstSeen": "2026-03-28T01:27:07.8337915+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 56816,
+    "ProcessName": "cmd",
+    "FirstSeen": "2026-03-28T01:27:06.3993189+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 87600,
+    "ProcessName": "conhost",
+    "FirstSeen": "2026-03-28T01:27:06.3951305+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 83420,
+    "ProcessName": "TaxHeaven3000",
+    "FirstSeen": "2026-03-28T01:27:04.8814608+00:00",
+    "LastAnalyzed": "2026-03-28T01:27:08.979307+00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [
+      {
+        "Timestamp": "2026-03-28T01:27:08.9793034+00:00",
+        "LastSeen": "2026-03-28T01:27:08.9793036+00:00",
+        "Tactic": "Persistence",
+        "TechniqueId": "T1547",
+        "TechniqueName": "Boot or Logon Autostart Execution",
+        "EventType": "Registry",
+        "MatchedIndicator": "system\\currentcontrolset\\services",
+        "RawData": "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\NVIDIA OpenGL Driver",
+        "AttemptCount": 1
+      },
+      {
+        "Timestamp": "2026-03-28T01:27:07.8371408+00:00",
+        "LastSeen": "2026-03-28T01:27:10.160065+00:00",
+        "Tactic": "",
+        "TechniqueId": "",
+        "TechniqueName": "",
+        "EventType": "ContextSignal",
+        "MatchedIndicator": "c:\\programdata\\",
+        "RawData": "C:\\ProgramData\\NVIDIA Corporation\\Drs\\nvdrsdb0.bin",
+        "AttemptCount": 6
+      },
+      {
+        "Timestamp": "2026-03-28T01:27:06.4001578+00:00",
+        "LastSeen": "2026-03-28T01:27:06.4001582+00:00",
+        "Tactic": "",
+        "TechniqueId": "",
+        "TechniqueName": "",
+        "EventType": "ContextSignal",
+        "MatchedIndicator": "\\appdata\\local\\temp\\",
+        "RawData": "C:\\Users\\wolf\\AppData\\Local\\Temp\\ha7pbwxq",
+        "AttemptCount": 1
+      },
+      {
+        "Timestamp": "2026-03-28T01:27:04.8900272+00:00",
+        "LastSeen": "2026-03-28T01:27:07.8336575+00:00",
+        "Tactic": "Execution",
+        "TechniqueId": "T1218",
+        "TechniqueName": "System Binary Proxy Execution",
+        "EventType": "ProcessSpawn",
+        "MatchedIndicator": "cmd.exe",
+        "RawData": "cmd.exe",
+        "AttemptCount": 4
+      }
+    ],
+    "DedupCache": {
+      "83420|ContextSignal|context_signal|c:\\programdata\\": {
+        "Timestamp": "2026-03-28T01:27:07.8371408+00:00",
+        "LastSeen": "2026-03-28T01:27:10.160065+00:00",
+        "Tactic": "",
+        "TechniqueId": "",
+        "TechniqueName": "",
+        "EventType": "ContextSignal",
+        "MatchedIndicator": "c:\\programdata\\",
+        "RawData": "C:\\ProgramData\\NVIDIA Corporation\\Drs\\nvdrsdb0.bin",
+        "AttemptCount": 6
+      },
+      "83420|Registry|registry_persistence|system\\currentcontrolset\\services": {
+        "Timestamp": "2026-03-28T01:27:08.9793034+00:00",
+        "LastSeen": "2026-03-28T01:27:08.9793036+00:00",
+        "Tactic": "Persistence",
+        "TechniqueId": "T1547",
+        "TechniqueName": "Boot or Logon Autostart Execution",
+        "EventType": "Registry",
+        "MatchedIndicator": "system\\currentcontrolset\\services",
+        "RawData": "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\NVIDIA OpenGL Driver",
+        "AttemptCount": 1
+      },
+      "83420|ContextSignal|context_signal|\\appdata\\local\\temp\\": {
+        "Timestamp": "2026-03-28T01:27:06.4001578+00:00",
+        "LastSeen": "2026-03-28T01:27:06.4001582+00:00",
+        "Tactic": "",
+        "TechniqueId": "",
+        "TechniqueName": "",
+        "EventType": "ContextSignal",
+        "MatchedIndicator": "\\appdata\\local\\temp\\",
+        "RawData": "C:\\Users\\wolf\\AppData\\Local\\Temp\\ha7pbwxq",
+        "AttemptCount": 1
+      },
+      "83420|ProcessSpawn|process_lolbin|cmd.exe": {
+        "Timestamp": "2026-03-28T01:27:04.8900272+00:00",
+        "LastSeen": "2026-03-28T01:27:07.8336575+00:00",
+        "Tactic": "Execution",
+        "TechniqueId": "T1218",
+        "TechniqueName": "System Binary Proxy Execution",
+        "EventType": "ProcessSpawn",
+        "MatchedIndicator": "cmd.exe",
+        "RawData": "cmd.exe",
+        "AttemptCount": 4
+      }
+    },
+    "WriteDirectories": {
+      "c:\\users\\wolf\\downloads\\tax-heaven-3000-windows\\taxheaven3000-1.0-win\\game\\saves": 1,
+      "c:\\users\\wolf\\appdata\\local\\temp": 1,
+      "c:\\programdata\\nvidia corporation\\drs": 5,
+      "c:\\programdata\\nvidia corporation\\shadowplay": 1,
+      "c:\\users\\wolf\\appdata\\roaming\\renpy\\taxheaven3000-1674076411": 1,
+      "c:\\users\\wolf\\downloads\\tax-heaven-3000-windows\\taxheaven3000-1.0-win": 49
+    },
+    "ExeDropPaths": [],
+    "DeletedPaths": [
+      "C:\\Users\\wolf\\Downloads\\tax-heaven-3000-windows\\TaxHeaven3000-1.0-win\\game\\saves\\text.txt",
+      "C:\\Users\\wolf\\AppData\\Roaming\\RenPy\\TaxHeaven3000-1674076411\\text.txt",
+      "C:\\Users\\wolf\\AppData\\Local\\Temp\\ha7pbwxq"
+    ],
+    "SpawnedCommandLines": [
+      {},
+      {},
+      {},
+      {}
+    ],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        1.888103794352266,
+        0,
+        1.888103794352266,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        24.71302005461577,
+        2.7458911171795304,
+        0.9152970390598435,
+        0
+      ],
+      [
+        17.03012881183954,
+        0,
+        0.8109585148495019,
+        0
+      ],
+      [
+        11.742851897716628,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": [
+      0.820401011826079
+    ]
+  },
+  {
+    "ProcessId": 66736,
+    "ProcessName": "conhost",
+    "FirstSeen": "2026-03-28T01:27:06.3976406+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 35216,
+    "ProcessName": "conhost",
+    "FirstSeen": "2026-03-28T01:27:06.3994255+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 86392,
+    "ProcessName": "cmd",
+    "FirstSeen": "2026-03-28T01:27:06.3975634+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  },
+  {
+    "ProcessId": 29784,
+    "ProcessName": "cmd",
+    "FirstSeen": "2026-03-28T01:27:07.8337204+00:00",
+    "LastAnalyzed": "0001-01-01T00:00:00",
+    "LastNarrativePrint": "0001-01-01T00:00:00",
+    "LastReportedSeverity": "BENIGN",
+    "EventTimeline": [],
+    "DedupCache": {},
+    "WriteDirectories": {},
+    "ExeDropPaths": [],
+    "DeletedPaths": [],
+    "SpawnedCommandLines": [],
+    "AnomalyHistory": [
+      [
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "KnnScores": []
+  }
+]
