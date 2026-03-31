@@ -256,7 +256,6 @@ public partial class Program
             {
                 if (string.IsNullOrEmpty(data.FileName)) return;
                 MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileOpen");
-                ConsoleSummarizer.TrackFileAccess(data.ProcessID, data.ProcessName, data.FileName, "Open");
             }
         };
 
@@ -266,7 +265,6 @@ public partial class Program
             {
                 if (string.IsNullOrEmpty(data.FileName)) return;
                 MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName, data.FileName, "FileRead");
-                ConsoleSummarizer.TrackFileAccess(data.ProcessID, data.ProcessName, data.FileName, "Read");
             }
         };
 
@@ -293,7 +291,6 @@ public partial class Program
             if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
             {
                 MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "Create");
-                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Create");
             }
         };
 
@@ -302,7 +299,6 @@ public partial class Program
             if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
             {
                 MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "Open");
-                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Open");
             }
         };
 
@@ -311,7 +307,6 @@ public partial class Program
             if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
             {
                 MapToData.EvaluateRegistryAccess(data.ProcessID, data.ProcessName ?? "", data.KeyName ?? "", "SetValue");
-                ConsoleSummarizer.TrackRegistryAccess(data.ProcessID, data.ProcessName, data.KeyName, "Write");
             }
         };
 
