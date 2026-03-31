@@ -28,8 +28,6 @@ public partial class Program
         Console.CancelKeyPress += (sender, e) =>
         {
             e.Cancel = true;
-            SaveAllLogsToFile("log.txt");
-            MapToData.SaveToFile("profiles.json");
 
             var mergedProfiles = MapToData.ActiveProfiles.Values
                 .GroupBy(p => p.ProcessName?.ToLowerInvariant() ?? "")
@@ -351,16 +349,6 @@ public partial class Program
         lock (logLock) { logEntries.Add(entry); }
     }
 
-    private static void SaveAllLogsToFile(string fileName)
-    {
-        lock (logLock)
-        {
-            if (logEntries.Count == 0) return;
-            string logPath = Path.Combine(Directory.GetCurrentDirectory(), fileName);
-            try { File.WriteAllLines(logPath, logEntries); }
-            catch { }
-        }
-    }
 }
 
 public class MappedRule
@@ -567,10 +555,6 @@ public static class MapToData
     public static List<string>               _contextSignalPaths      = new();
 
     private static volatile bool _profilesDirty = false;
-    private static readonly System.Threading.Timer _saveTimer = new(_ =>
-    {
-        if (_profilesDirty) { _profilesDirty = false; SaveToFile("profiles.json"); }
-    }, null, 5000, 5000);
 
     public static void ResetSession()
     {
@@ -1032,14 +1016,4 @@ public static class MapToData
         "CRITICAL" => 4, "HIGH" => 3, "MEDIUM" => 2, "LOW" => 1, _ => 0
     };
 
-    public static void SaveToFile(string outputPath)
-    {
-        try
-        {
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            string json = JsonSerializer.Serialize(ActiveProfiles.Values, options);
-            File.WriteAllText(outputPath, json);
-        }
-        catch { }
-    }
 }
