@@ -11,36 +11,10 @@ public static class Simulator
 
     public static async Task Main()
     {
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("  CyberProfiler — Behaviour Simulator");
-        Console.WriteLine("  ====================================");
-        Console.ResetColor();
-        Console.WriteLine($"  PID  : {Environment.ProcessId}");
-        Console.WriteLine($"  Name : {Process.GetCurrentProcess().ProcessName}");
-        Console.WriteLine();
-
-        Console.WriteLine("  Choose a simulation mode:");
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine("    [1]  Malicious    — Full attack chain (drops, persistence, creds, exfil, cleanup)");
-        Console.ResetColor();
-        Console.ForegroundColor = ConsoleColor.DarkYellow;
-        Console.WriteLine("    [2]  Suspicious   — Reconnaissance only (looks around, no damage)");
-        Console.ResetColor();
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("    [3]  Inconclusive — Ambiguous activity (borderline behaviour)");
-        Console.ResetColor();
-        Console.WriteLine();
-
         int mode = 0;
         while (mode < 1 || mode > 3)
-        {
-            Console.Write("  Enter 1, 2, or 3: ");
             int.TryParse(Console.ReadLine()?.Trim(), out mode);
-        }
 
-        Console.WriteLine();
-        Console.WriteLine("  Start the profiler targeting this process, then press ENTER.");
         Console.ReadLine();
 
         Directory.CreateDirectory(Drop);
@@ -59,10 +33,6 @@ public static class Simulator
             await Cleanup();
         }
 
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("  Simulation finished. Check the profiler for detections.");
-        Console.ResetColor();
         Console.ReadLine();
     }
 
@@ -462,21 +432,9 @@ public static class Simulator
 
     private static readonly List<string> _extraDirs = [];
 
-    static async Task Phase(string name, Func<Task> action)
-    {
-        Console.WriteLine();
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine($"  ── Phase {name}");
-        Console.ResetColor();
-        await action();
-    }
+    static async Task Phase(string name, Func<Task> action) => await action();
 
-    static void Log(string msg)
-    {
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"     {msg}");
-        Console.ResetColor();
-    }
+    static void Log(string msg) { }
 
     static async Task Spawn(string exe, string args, bool showWindow = false)
     {
@@ -490,13 +448,11 @@ public static class Simulator
             using var p = Process.Start(psi);
             await Task.Run(() => p?.WaitForExit(5000));
         }
-        catch (Exception ex) { Log($"  [spawn failed] {exe}: {ex.Message}"); }
+        catch { }
     }
 
     static async Task Cleanup()
     {
-        Console.WriteLine();
-        Log("Cleaning up...");
         foreach (var dir in _extraDirs)
             try { Directory.Delete(dir, recursive: true); } catch { }
         try { Directory.Delete(Drop, recursive: true); } catch { }

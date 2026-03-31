@@ -20,22 +20,16 @@ public partial class Program
     public static void Main(string[] args)
     {
         logEntries.Add("Activity Log " + DateTime.Now);
-        Console.Write("process name: ");
         string targetProcess = Console.ReadLine()?.ToLower() ?? "";
 
         if (string.IsNullOrWhiteSpace(targetProcess))
-        {
-            Console.WriteLine("no process specified");
             return;
-        }
 
         Console.CancelKeyPress += (sender, e) =>
         {
             e.Cancel = true;
             SaveAllLogsToFile("log.txt");
             MapToData.SaveToFile("profiles.json");
-
-            Console.WriteLine("\n-- session report --\n");
 
             var mergedProfiles = MapToData.ActiveProfiles.Values
                 .GroupBy(p => p.ProcessName?.ToLowerInvariant() ?? "")
@@ -83,16 +77,8 @@ public partial class Program
                 string metadataText = MetadataExporter.Generate(mergedProfiles.ToList());
                 string metadataPath = Path.Combine(AppContext.BaseDirectory, "lifecycle_metadata.txt");
                 File.WriteAllText(metadataPath, metadataText, System.Text.Encoding.UTF8);
-                Console.ForegroundColor = ConsoleColor.DarkCyan;
-                Console.WriteLine($"\n  Lifecycle metadata saved to: {metadataPath}");
-                Console.ResetColor();
             }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine($"\n  Could not save lifecycle metadata: {ex.Message}");
-                Console.ResetColor();
-            }
+            catch { }
 
             Environment.Exit(0);
         };
@@ -109,8 +95,6 @@ public partial class Program
         var eventLogQuery = new EventLogQuery("Microsoft-Windows-Sysmon/Operational", PathType.LogName, query);
         using (var watcher = new EventLogWatcher(eventLogQuery))
         {
-            Console.WriteLine($"sysmon: {targetProcess}");
-
             watcher.EventRecordWritten += (sender, e) =>
             {
                 if (e.EventRecord != null)
@@ -155,10 +139,7 @@ public partial class Program
                 MapToData.EvaluateNetworkConnection(pid, image, destinationHostname);
             }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"sysmon error: {ex.Message}");
-        }
+        catch { }
     }
 
     static string GetEventName(int eventId) => eventId switch
@@ -261,8 +242,6 @@ public partial class Program
             KernelTraceEventParser.Keywords.Registry   |
             KernelTraceEventParser.Keywords.DiskFileIO |
             KernelTraceEventParser.Keywords.NetworkTCPIP);
-
-        Console.WriteLine($"etw: monitoring {targetProcess}");
 
         session.Source.Kernel.FileIOWrite += data =>
         {
@@ -376,14 +355,10 @@ public partial class Program
     {
         lock (logLock)
         {
-            if (logEntries.Count == 0) { Console.WriteLine("no log entries"); return; }
+            if (logEntries.Count == 0) return;
             string logPath = Path.Combine(Directory.GetCurrentDirectory(), fileName);
-            try
-            {
-                File.WriteAllLines(logPath, logEntries);
-                Console.WriteLine($"saved {logEntries.Count} entries to {logPath}");
-            }
-            catch (Exception ex) { Console.WriteLine($"{ex.Message}"); }
+            try { File.WriteAllLines(logPath, logEntries); }
+            catch { }
         }
     }
 }
@@ -1065,9 +1040,6 @@ public static class MapToData
             string json = JsonSerializer.Serialize(ActiveProfiles.Values, options);
             File.WriteAllText(outputPath, json);
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"{ex.Message}");
-        }
+        catch { }
     }
 }
