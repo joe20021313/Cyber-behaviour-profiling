@@ -298,7 +298,6 @@ public static class Simulator
 
     static async Task Sus_DirectoryEnum()
     {
-
         string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -328,7 +327,6 @@ public static class Simulator
 
     static async Task Sus_DiscoveryTools()
     {
-
         (string exe, string args)[] commands =
         {
             ("whoami.exe",     "/all"),
@@ -350,7 +348,6 @@ public static class Simulator
 
     static async Task Sus_ProcessSpawns()
     {
-
         Log("Spawning cmd.exe (no malicious payload)...");
         await Spawn("cmd.exe", "/c echo System check complete");
         await Task.Delay(1000);
@@ -369,7 +366,6 @@ public static class Simulator
 
     static async Task Sus_NetworkProbe()
     {
-
         Log("Making outbound HTTP connections...");
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         string[] urls =
@@ -389,7 +385,6 @@ public static class Simulator
 
     static async Task Sus_RapidWrites()
     {
-
         string dir = Path.Combine(Drop, "scratch");
         Directory.CreateDirectory(dir);
 
@@ -406,7 +401,6 @@ public static class Simulator
 
     static async Task Inc_FileActivity()
     {
-
         string[] paths =
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"),
@@ -438,7 +432,6 @@ public static class Simulator
 
     static async Task Inc_TempWrites()
     {
-
         Log("Writing 3 temp files...");
         for (int i = 0; i < 3; i++)
         {
@@ -451,7 +444,6 @@ public static class Simulator
 
     static async Task Inc_DirectoryChecks()
     {
-
         string[] dirs =
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Common Files"),

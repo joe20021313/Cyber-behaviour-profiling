@@ -604,7 +604,7 @@ public static class MapToData
         _profilesDirty = false;
     }
 
-    public static void TakeAnomalySnapshot()
+      public static void TakeAnomalySnapshot()
     {
         foreach (var profile in ActiveProfiles.Values)
         {
