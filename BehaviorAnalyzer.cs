@@ -289,13 +289,14 @@ namespace Cyber_behaviour_profiling
 
             if (anomaly.AnomalyDetected)
             {
-                score += anomaly.Score;
+                int anomalyAdj = (int)(anomaly.Score * trustMult);
+                score += anomalyAdj;
                 firedCount++;
                 string metrics = anomaly.SpikedMetrics.Count > 0
                     ? string.Join(", ", anomaly.SpikedMetrics)
                     : "behaviour deviation from baseline";
                 report.DecisionReasons.Add(
-                    $"  [+{anomaly.Score}pts] KNN Anomaly: {metrics}");
+                    $"  [{anomalyAdj:+#;-#;0}pts] KNN Anomaly: {metrics} (trust ×{trustMult:F1})");
             }
 
             if (firedCount >= 6)
