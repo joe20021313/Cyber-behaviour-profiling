@@ -123,7 +123,7 @@ namespace Cyber_behaviour_profiling
 
             string story = grade == "SAFE"
                 ? (report.DecisionReasons.FirstOrDefault(r =>
-                       r.StartsWith("[BENIGN]") || r.StartsWith("[SAFE]"))
+                       r.StartsWith("[SAFE]"))
                    ?? ReturnVerdict(grade))
                 : ReturnVerdict(grade);
 

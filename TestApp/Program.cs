@@ -69,7 +69,7 @@ public static class Simulator
 
     static async Task Baseline()
     {
-        Log("Reading ordinary files to establish quiet baseline (~20s)...");
+        
         string[] probes =
         {
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -92,7 +92,6 @@ public static class Simulator
             "WindowsUpdate", "cache");
         Directory.CreateDirectory(staging);
 
-        Log("Connecting to remote host to fetch payload...");
         byte[] bytes;
         try
         {
@@ -128,7 +127,6 @@ public static class Simulator
 
     static async Task Mal_LolbinExecution()
     {
-        Log("Spawning powershell.exe -ExecutionPolicy Bypass ...");
         await Spawn("powershell.exe",
             "-ExecutionPolicy Bypass -NoProfile -Command \"Write-Host 'Simulated payload execution'; Start-Sleep 2\"",
             showWindow: true);
@@ -208,7 +206,6 @@ public static class Simulator
             .ToArray();
         foreach (var d in dirs) Directory.CreateDirectory(d);
 
-        Log("Writing 80 files across 6 directories rapidly...");
         int count = 0;
         for (int round = 0; round < 4; round++)
         {
@@ -259,7 +256,6 @@ public static class Simulator
         string marker = Path.Combine(Drop, "marker.exe");
         await File.WriteAllTextAsync(marker, "marker");
 
-        Log("Spawning cmd.exe to delete dropped file after delay (self-deletion pattern)...");
         await Spawn("cmd.exe",
             $"/c ping -n 3 127.0.0.1 > nul && del /f /q \"{marker}\"");
         await Task.Delay(4000);
@@ -318,11 +314,9 @@ public static class Simulator
 
     static async Task Sus_ProcessSpawns()
     {
-        Log("Spawning cmd.exe (no malicious payload)...");
         await Spawn("cmd.exe", "/c echo System check complete");
         await Task.Delay(1000);
 
-        Log("Spawning powershell.exe (no bypass flags)...");
         await Spawn("powershell.exe",
             "-Command \"Get-Date; Get-Process | Select-Object -First 5\"",
             showWindow: true);

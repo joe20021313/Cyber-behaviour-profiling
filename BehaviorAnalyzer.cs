@@ -21,7 +21,7 @@ namespace Cyber_behaviour_profiling
     {
         public bool IsSuspicious { get; set; } = false;
         public int FinalScore { get; set; } = 0;
-        public string Severity { get; set; } = "BENIGN";
+        public string Severity { get; set; } = "SAFE";
         public List<string> DecisionReasons { get; set; } = new();
         public List<string> SafeReasons { get; set; } = new();
         public ChainConfirmationResult ChainResult { get; set; } = new();
@@ -155,11 +155,11 @@ namespace Cyber_behaviour_profiling
                 {
                     report.IsSuspicious = false;
                     report.FinalScore = 0;
-                    report.Severity = "BENIGN";
+                    report.Severity = "SAFE";
                     report.IsSigned = ctx.IsSigned;
                     report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
-                        $"[BENIGN] '{profile.ProcessName}' carries a valid Authenticode signature " +
+                        $"[SAFE] '{profile.ProcessName}' carries a valid Authenticode signature " +
                         $"('{ctx.SignerName}'), launched normally by '{ctx.ParentProcess}'. " +
                         $"Routine system activity suppressed.");
                     report.SafeReasons = BuildSafeReasons(ctx, profile, events);
@@ -189,7 +189,7 @@ namespace Cyber_behaviour_profiling
                 {
                     report.IsSuspicious = false;
                     report.FinalScore   = 0;
-                    report.Severity     = "BENIGN";
+                    report.Severity     = "SAFE";
                     report.IsSigned = ctx.IsSigned;
                     report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
@@ -232,11 +232,11 @@ namespace Cyber_behaviour_profiling
                 {
                     report.IsSuspicious = false;
                     report.FinalScore = 0;
-                    report.Severity = "BENIGN";
+                    report.Severity = "SAFE";
                     report.IsSigned = ctx.IsSigned;
                     report.SignerName = ctx.SignerName;
                     report.DecisionReasons.Add(
-                        $"[BENIGN] '{profile.ProcessName}' is a valid signed application launched normally by parent '{ctx.ParentProcess}'. Safely ignored to avoid false positives.");
+                        $"[SAFE] '{profile.ProcessName}' is a valid signed application launched normally by parent '{ctx.ParentProcess}'. Safely ignored to avoid false positives.");
                     report.SafeReasons = BuildSafeReasons(ctx, profile, events);
                     return report;
                 }
@@ -376,7 +376,7 @@ namespace Cyber_behaviour_profiling
             report.Severity = score >= MapToData._scoring.critical_threshold ? "CRITICAL" :
                               score >= MapToData._scoring.high_threshold     ? "HIGH"     :
                               score >= MapToData._scoring.medium_threshold   ? "MEDIUM"   :
-                              score >= MapToData._scoring.low_threshold      ? "LOW"      : "BENIGN";
+                              score >= MapToData._scoring.low_threshold      ? "LOW"      : "SAFE";
             report.IsSuspicious = score >= MapToData._scoring.medium_threshold;
 
             string grade = AttackNarrator.ToGrade(score, chainResult, firedCount, observedTacticCount);
@@ -1196,7 +1196,7 @@ namespace Cyber_behaviour_profiling
             {
                 using var proc = Process.GetProcessById(pid);
 
-                ctx.FilePath = proc.MainModule?.FileName ?? "UNKNOWN";
+                ctx.FilePath = proc.MainModule?.FileName ?? "UNKNOWN"; // Asking bunch of questions to the process to fill in context; 
                 ctx.HandleCount = proc.HandleCount;
                 ctx.WorkingSetMB = proc.WorkingSet64 / (1024 * 1024);
                 ctx.CpuTimeSeconds = proc.TotalProcessorTime.TotalSeconds;

@@ -28,6 +28,8 @@ public partial class Program
         Console.CancelKeyPress += (sender, e) =>
         {
             e.Cancel = true;
+            
+           
 
             var mergedProfiles = MapToData.ActiveProfiles.Values
                 .GroupBy(p => p.ProcessName?.ToLowerInvariant() ?? "")
@@ -64,12 +66,13 @@ public partial class Program
 
             foreach (var profile in mergedProfiles)
             {
-                profile.DirectorySnapshotBefore = _baselineSnapshot;
+                profile.DirectorySnapshotBefore = _baselineSnapshot; //Meant for comparison
                 var finalReport = BehaviorAnalyzer.Analyze(profile);
                 var narrative   = AttackNarrator.BuildNarrative(profile, finalReport);
                 AttackNarrator.PrintNarrative(narrative);
             }
 
+            // Save program lifecycle metadata
             try
             {
                 string metadataText = MetadataExporter.Generate(mergedProfiles.ToList());
@@ -116,11 +119,11 @@ public partial class Program
             var nsMgr = new XmlNamespaceManager(doc.NameTable);
             nsMgr.AddNamespace("ns", "http://schemas.microsoft.com/win/2004/08/events/event");
 
-            var imageNode = doc.SelectSingleNode("
+            var imageNode = doc.SelectSingleNode("//ns:Data[@Name='Image']", nsMgr);
             string image = imageNode?.InnerText?.ToLower() ?? "";
             if (!image.Contains(targetProcess)) return;
 
-            var dataNodes = doc.SelectNodes("
+            var dataNodes = doc.SelectNodes("//ns:Data", nsMgr);
             string destinationHostname = "";
             int pid = 0;
             foreach (XmlNode node in dataNodes)
@@ -154,6 +157,7 @@ public partial class Program
     {
         MapToData.LoadData("data.json");
 
+        // Capture baseline directory snapshot for investigation
         try
         {
             Cyber_behaviour_profiling.InvestigationLog.Section("CONSOLE SESSION START — BASELINE SNAPSHOT");
@@ -330,6 +334,8 @@ public partial class Program
             }
         };
 
+        // Needs threads because subscribers never finish  processing
+
         Thread dpapiThread = new Thread(() => userSession.Source.Process()) { IsBackground = true };
         dpapiThread.Start();
 
@@ -344,7 +350,9 @@ public partial class Program
         lock (logLock) { logEntries.Add(entry); }
     }
 
+ 
 }
+
 
 public class MappedRule
 {
@@ -395,6 +403,7 @@ public class ProcessProfile
     public int TotalFileWrites;
     public int TotalFileDeletes;
 
+    // KNN anomaly detection state
     public List<double[]> AnomalyHistory { get; set; } = new();
     public List<double> KnnScores { get; set; } = new();
     public int PrevFileWrites;
@@ -402,6 +411,7 @@ public class ProcessProfile
     public int PrevEventCount;
     public DateTime PrevSnapshotTime = DateTime.MinValue;
 
+    // Pre-monitoring directory snapshot for investigation
     [System.Text.Json.Serialization.JsonIgnore]
     public DirectorySnapshot? DirectorySnapshotBefore { get; set; }
 }
@@ -523,6 +533,7 @@ public static class MapToData
     private static List<MappedRule> _commandRules   = new();
     private static List<MappedRule> _discoveryRules = new();
 
+    // Public read-only access for the report layer
     public static IReadOnlyList<MappedRule> LolbinRules    => _lolbinRules;
     public static IReadOnlyList<MappedRule> CommandRules   => _commandRules;
     public static IReadOnlyList<MappedRule> DiscoveryRules => _discoveryRules;
@@ -550,6 +561,7 @@ public static class MapToData
     public static List<string>               _contextSignalPaths      = new();
 
     private static volatile bool _profilesDirty = false;
+
 
     public static void ResetSession()
     {
@@ -582,7 +594,7 @@ public static class MapToData
             double writeRate  = (profile.TotalFileWrites  - profile.PrevFileWrites)  / elapsed;
             double deleteRate = (profile.TotalFileDeletes - profile.PrevFileDeletes) / elapsed;
             double eventRate  = (profile.EventTimeline.Count - profile.PrevEventCount) / elapsed;
-            double netConns   = 0;
+            double netConns   = 0; // network connections count is context-level, filled at Evaluate time
 
             profile.AnomalyHistory.Add(new[] { writeRate, deleteRate, eventRate, netConns });
 
@@ -745,9 +757,10 @@ public static class MapToData
             profile.TotalFileDeletes++;
             if (!fileName.StartsWith("__psscriptpolicytest_") &&
                 !fileName.StartsWith("__pssessionconfigurationtest_"))
-                profile.DeletedPaths.Add(filePath);
+                profile.DeletedPaths.Add(filePath); 
         }
 
+        
         if (eventType == "FileWrite")
         {
             string ext = Path.GetExtension(lowerPath);
@@ -850,6 +863,7 @@ public static class MapToData
         if ((rule.Category == "registry_defense_evasion" || rule.Category == "registry_persistence") && operation == "Open")
             return;
 
+      
         if (rule.Pattern == "system\\currentcontrolset\\services" && operation == "Open")
             return;
 
@@ -1011,4 +1025,5 @@ public static class MapToData
         "CRITICAL" => 4, "HIGH" => 3, "MEDIUM" => 2, "LOW" => 1, _ => 0
     };
 
+  
 }
