@@ -37,9 +37,6 @@ namespace cyber_behaviour_profiling_2
                         case "Dashboard":
                             MainFrame.Navigate(new Pages.DetectionPage());
                             break;
-                        case "Rules":
-                            MainFrame.Navigate(new Pages.RulesPage());
-                            break;
                         case "Reports":
                             MainFrame.Navigate(new Pages.ReportsPage());
                             break;

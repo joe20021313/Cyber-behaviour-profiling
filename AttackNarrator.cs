@@ -25,8 +25,6 @@ namespace Cyber_behaviour_profiling
         public DateTime LastSeen { get; set; }
         public double TotalSeconds { get; set; }
         public List<NarrativeStep> Timeline { get; set; } = new();
-        public string OverallStory { get; set; }
-        public List<string> AbsentIndicators { get; set; } = new();
         public List<string> AnomalyFindings { get; set; } = new();
         public List<string> DecisionReasons { get; set; } = new();
         public List<string> SafeReasons { get; set; } = new();
@@ -34,7 +32,7 @@ namespace Cyber_behaviour_profiling
 
         public List<string> DroppedFiles { get; set; } = new();
         public List<string> DeletedFiles { get; set; } = new();
-        public List<(string ChildName, string CommandLine)> SpawnedCommands { get; set; } = new();
+        public List<SpawnedProcess> SpawnedCommands { get; set; } = new();
         public bool IsSigned { get; set; }
         public string SignerName { get; set; } = "";
     }
@@ -63,32 +61,46 @@ namespace Cyber_behaviour_profiling
             ["dns_c2"] = ("CommandAndControl", "T1071", "Application Layer Protocol"),
             ["file_exe_drop"] = ("Execution", "T1105", "Ingress Tool Transfer"),
             ["network_outbound"] = ("", "", "Outbound Network Connection"),
+            ["lsass_access"]      = ("CredentialAccess", "T1003.001", "LSASS Memory"),
+            ["process_injection"] = ("DefenseEvasion",   "T1055",     "Process Injection"),
+            ["process_tampering"] = ("DefenseEvasion",   "T1055.012", "Process Hollowing"),
         };
 
         public static (string Tactic, string TechniqueId, string TechniqueName) ResolveCategory(string category) =>
             _categoryMap.TryGetValue(category ?? "", out var r) ? r : ("", "", "");
 
+        private static string ResolveTactic(string category) => ResolveCategory(category).Tactic;
+
         public static bool IsHighValueCategory(string category) =>
             ResolveCategory(category).Tactic is "CredentialAccess" or "CommandAndControl" or "Exfiltration";
 
+        public static string ToGrade(ThreatImpact impact) => impact switch
+        {
+            ThreatImpact.Malicious    => "MALICIOUS",
+            ThreatImpact.Suspicious   => "SUSPICIOUS",
+            ThreatImpact.Inconclusive => "INCONCLUSIVE",
+            _                         => "SAFE"
+        };
+
+        // Backward-compatible overload for legacy/test usage
         public static string ToGrade(int score) =>
-            ToGrade(score, new ChainConfirmationResult());
+            ToGrade(score >= 85 ? ThreatImpact.Malicious :
+                    score >= 40 ? ThreatImpact.Suspicious :
+                    score >= 15 ? ThreatImpact.Inconclusive :
+                    ThreatImpact.Safe);
 
         public static string ToGrade(int score, ChainConfirmationResult chainResult,
             int firedChecks = 0, int observedTacticCount = 0)
         {
-            if (score >= MapToData._scoring.critical_threshold)
-                return (chainResult.HasConfirmedChain || chainResult.HasHardIndicator) ? "MALICIOUS" : "SUSPICIOUS";
-
-            if (score >= MapToData._scoring.review_threshold && chainResult.HasHardIndicator)
+            // Legacy overload — preserved for tests but no longer used by Analyze()
+            if (score >= 85)
+                return chainResult.HasHardIndicator ? "MALICIOUS" : "SUSPICIOUS";
+            if (score >= 40 && chainResult.HasHardIndicator)
                 return "SUSPICIOUS";
-
-            if (score >= MapToData._scoring.review_threshold)
+            if (score >= 40)
                 return (observedTacticCount >= 1 || firedChecks >= 3) ? "SUSPICIOUS" : "INCONCLUSIVE";
-
-            if (score >= MapToData._scoring.medium_threshold)
+            if (score >= 15)
                 return "INCONCLUSIVE";
-
             return "SAFE";
         }
 
@@ -98,7 +110,8 @@ namespace Cyber_behaviour_profiling
                 .OrderBy(e => e.Timestamp)
                 .ToList();
 
-            string grade = ToGrade(report.FinalScore, report.ChainResult, report.FiredChecks, report.ObservedTacticCount);
+            string grade = ToGrade(report.FinalVerdict);
+
 
             if (!events.Any())
                 return new AttackNarrative
@@ -106,13 +119,11 @@ namespace Cyber_behaviour_profiling
                     ProcessName      = profile.ProcessName,
                     ProcessId        = profile.ProcessId,
                     Grade            = grade,
-                    OverallStory     = ReturnVerdict(grade),
-                    AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new(),
                     AnomalyFindings  = report.Anomaly?.SpikedMetrics ?? new(),
                     DecisionReasons  = report.DecisionReasons,
                     SafeReasons      = report.SafeReasons,
                     FinalScore       = report.FinalScore,
-                    DroppedFiles     = profile.ExeDropPaths.ToList(),
+                    DroppedFiles     = profile.ExeDropPaths.Keys.ToList(),
                     DeletedFiles     = profile.DeletedPaths.ToList(),
                     SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
                     IsSigned         = report.IsSigned,
@@ -120,12 +131,6 @@ namespace Cyber_behaviour_profiling
                 };
 
             var steps = events.Select(TranslateEvent).ToList();
-
-            string story = grade == "SAFE"
-                ? (report.DecisionReasons.FirstOrDefault(r =>
-                       r.StartsWith("[SAFE]"))
-                   ?? ReturnVerdict(grade))
-                : ReturnVerdict(grade);
 
             return new AttackNarrative
             {
@@ -136,13 +141,11 @@ namespace Cyber_behaviour_profiling
                 LastSeen         = events.Last().LastSeen,
                 TotalSeconds     = (events.Last().LastSeen - events.First().Timestamp).TotalSeconds,
                 Timeline         = steps,
-                OverallStory     = story,
-                AbsentIndicators = report.ChainResult?.AbsentIndicators ?? new(),
                 AnomalyFindings  = report.Anomaly?.SpikedMetrics ?? new(),
                 DecisionReasons  = report.DecisionReasons,
                 SafeReasons      = report.SafeReasons,
                 FinalScore       = report.FinalScore,
-                DroppedFiles     = profile.ExeDropPaths.ToList(),
+                DroppedFiles     = profile.ExeDropPaths.Keys.ToList(),
                 DeletedFiles     = profile.DeletedPaths.ToList(),
                 SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
                 IsSigned         = report.IsSigned,
@@ -169,7 +172,8 @@ namespace Cyber_behaviour_profiling
                 "Registry"                                                                  => "Registry",
                 "NetworkConnect" or "DNS_Query"                                             => "Network",
                 "ProcessSpawn" or "SuspiciousCommand" or "DiscoverySpawn"
-                    or "BlacklistedProcess" or "DPAPI_Decrypt"                              => "Process",
+                    or "BlacklistedProcess" or "DPAPI_Decrypt"
+                    or "LsassAccess" or "RemoteThreadInjection" or "ProcessTampering"       => "Process",
                 _                                                                           => "System"
             };
 
@@ -183,7 +187,7 @@ namespace Cyber_behaviour_profiling
                 _          => "[SYS ]"
             };
 
-            step.Tactic = ev.Tactic ?? "";
+            step.Tactic = ResolveTactic(ev.Category);
             step.Headline = BuildHeadline(ev, step.Category);
             return step;
         }
@@ -288,6 +292,12 @@ namespace Cyber_behaviour_profiling
 
             if (category == "Process")
             {
+                if (ev.EventType == "LsassAccess")
+                    return $"[!!!] Opened LSASS memory — credential dump attempt{reps}";
+                if (ev.EventType == "RemoteThreadInjection")
+                    return $"[!!!] Injected remote thread into '{ind}'{reps}";
+                if (ev.EventType == "ProcessTampering")
+                    return $"[!!!] Process image replaced — hollowing/herpaderping{reps}";
                 if (ev.EventType == "DPAPI_Decrypt")
                     return $"Called DPAPI to decrypt protected data{reps}";
 
@@ -332,7 +342,7 @@ namespace Cyber_behaviour_profiling
 
         private static string ReturnVerdict(string grade) => grade switch
         {
-            "MALICIOUS"    => "MALICIOUS — Confirmed malicious attack chain detected. Immediate attention required.",
+            "MALICIOUS"    => "MALICIOUS — Confirmed malicious activity detected. Immediate attention required.",
             "SUSPICIOUS"   => "SUSPICIOUS — Abnormal behavior detected that deviates from expected program activity. No confirmed damage.",
             "INCONCLUSIVE" => "INCONCLUSIVE — Some activity detected but insufficient evidence to determine intent.",
             _              => "SAFE — No suspicious activity detected."

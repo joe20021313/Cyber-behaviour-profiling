@@ -50,53 +50,9 @@ namespace Cyber_behaviour_profiling
     [SupportedOSPlatform("windows")]
     public static class SystemDiscovery
     {
-        private static readonly HashSet<string> _executableExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".exe", ".dll", ".scr", ".pif", ".bat", ".ps1",
-            ".cmd", ".vbs", ".hta", ".wsf", ".com", ".msi"
-        };
-
-        private static readonly HashSet<string> _malwareArtifactNames = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "mimikatz.exe", "procdump.exe", "lazagne.exe", "sharphound.exe",
-            "rubeus.exe", "seatbelt.exe", "winpeas.exe", "linpeas.sh",
-            "nc.exe", "ncat.exe", "plink.exe", "psexec.exe",
-            "payload.exe", "beacon.exe", "shell.exe", "reverse.exe",
-            "loader.exe", "dropper.exe", "inject.dll", "hook.dll",
-            "keylog.exe", "stealer.exe", "rat.exe", "backdoor.exe",
-            "dump.dmp", "lsass.dmp", "lsass.exe.dmp",
-            "wce.exe", "gsecdump.exe", "pwdump.exe",
-        };
-
-        private static readonly HashSet<string> _noiseExtensions = new(StringComparer.OrdinalIgnoreCase)
-        {
-            ".log", ".etl", ".tmp", ".pf", ".db-journal", ".db-wal",
-            ".nupkg", ".cache", ".lock", ".pdb", ".xml", ".json",
-            ".ngen", ".ni.dll", ".resources.dll"
-        };
-
-        private static readonly string[] _noisePathFragments =
-        {
-            @"\windows\prefetch\",
-            @"\windows\logs\",
-            @"\windows\temp\inetcache\",
-            @"\windows\softwaredistribution\",
-            @"\microsoft\windows\inetcache\",
-            @"\microsoft\office\",
-            @"\nuget\",
-            @"\packages\",
-            @"\obj\debug\",
-            @"\obj\release\",
-            @"\bin\debug\",
-            @"\bin\release\",
-            @"\.vs\",
-            @"\appdata\local\microsoft\clr_security_config\",
-        };
-
         public static DirectorySnapshot TakeDirectorySnapshot(IEnumerable<string> directories)
         {
             var snapshot = new DirectorySnapshot { CapturedAtUtc = DateTime.UtcNow };
-            InvestigationLog.Write($"Taking directory snapshot across {directories.Count()} directories");
 
             foreach (string rawDir in directories)
             {
@@ -117,7 +73,7 @@ namespace Cyber_behaviour_profiling
                                 Size         = info.Length
                             };
                         }
-                        catch { /* permission denied etc. */ }
+                        catch { }
                     }
 
                     foreach (string subDir in Directory.EnumerateDirectories(dir, "*", SearchOption.TopDirectoryOnly))
@@ -185,7 +141,6 @@ namespace Cyber_behaviour_profiling
             var result = new InvestigationResult();
             if (before == null || after == null) return result;
 
-            InvestigationLog.Section("DIRECTORY CHANGE INVESTIGATION");
 
             var diff = CompareSnapshots(before, after);
 
@@ -200,10 +155,10 @@ namespace Cyber_behaviour_profiling
                 string ext  = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 string name = Path.GetFileName(file.FullPath).ToLowerInvariant();
 
-                if (_executableExtensions.Contains(ext))
+                if (MapToData._executableExtensions.Contains(ext))
                 {
                     bool isSigned = VerifyFileSignature(file.FullPath);
-                    bool isMalwareArtifact = _malwareArtifactNames.Contains(name);
+                    bool isMalwareArtifact = MapToData._malwareArtifacts.Contains(name);
                     bool inSensitiveDir = sensitiveDirs?.Any(d =>
                         file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true;
 
@@ -253,7 +208,7 @@ namespace Cyber_behaviour_profiling
 
                     result.Findings.Add(finding);
                 }
-                else if (_malwareArtifactNames.Contains(name))
+                else if (MapToData._malwareArtifacts.Contains(name))
                 {
                     InvestigationLog.Write($"  [ALERT] Known malware artifact: {file.FullPath}");
                     result.Findings.Add(new InvestigationFinding
@@ -280,7 +235,7 @@ namespace Cyber_behaviour_profiling
                 if (IsNoise(file.FullPath)) continue;
 
                 string ext = Path.GetExtension(file.FullPath).ToLowerInvariant();
-                if (_executableExtensions.Contains(ext))
+                if (MapToData._executableExtensions.Contains(ext))
                 {
                     bool isSigned = VerifyFileSignature(file.FullPath);
                     InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath} (signed={isSigned})");
@@ -310,7 +265,7 @@ namespace Cyber_behaviour_profiling
             {
                 if (IsNoise(path)) continue;
                 string ext = Path.GetExtension(path).ToLowerInvariant();
-                if (_executableExtensions.Contains(ext))
+                if (MapToData._executableExtensions.Contains(ext))
                 {
                     InvestigationLog.Write($"  [WARNING] Executable deleted: {path}");
                     result.Findings.Add(new InvestigationFinding
@@ -376,7 +331,7 @@ namespace Cyber_behaviour_profiling
                 string ext  = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 string name = Path.GetFileName(file.FullPath).ToLowerInvariant();
 
-                if (_executableExtensions.Contains(ext))
+                if (MapToData._executableExtensions.Contains(ext))
                 {
                     bool isSigned = VerifyFileSignature(file.FullPath);
                     InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (signed={isSigned})");
@@ -402,7 +357,7 @@ namespace Cyber_behaviour_profiling
                         result.ScoreAdjustment += 5;
                     }
 
-                    if (_malwareArtifactNames.Contains(name))
+                    if (MapToData._malwareArtifacts.Contains(name))
                     {
                         finding.Children.Add(new InvestigationFinding
                         {
@@ -440,7 +395,7 @@ namespace Cyber_behaviour_profiling
                 foreach (var f in droppedToDownloadDirs.Take(5))
                 {
                     string ext = Path.GetExtension(f.FullPath).ToLowerInvariant();
-                    if (_executableExtensions.Contains(ext))
+                    if (MapToData._executableExtensions.Contains(ext))
                     {
                         result.Findings.Add(new InvestigationFinding
                         {
@@ -554,10 +509,10 @@ namespace Cyber_behaviour_profiling
             string lower = path.ToLowerInvariant();
             string ext = Path.GetExtension(lower);
 
-            if (_noiseExtensions.Contains(ext))
+            if (MapToData._noiseExtensions.Contains(ext))
                 return true;
 
-            if (_noisePathFragments.Any(frag => lower.Contains(frag)))
+            if (MapToData._noisePaths.Any(frag => lower.Contains(frag)))
                 return true;
 
             try

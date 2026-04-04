@@ -93,9 +93,9 @@ public static class MetadataExporter
                 sb.AppendLine($"  │");
 
                 var spawnCollapsed = spawned
-                    .GroupBy(s => $"{s.ChildName}|{s.CommandLine}", StringComparer.OrdinalIgnoreCase)
-                    .Select(g => (g.First().ChildName, g.First().CommandLine, Count: g.Count()))
-                    .OrderBy(s => s.ChildName);
+                    .GroupBy(s => $"{s.Name}|{s.CommandLine}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => (g.First().Name, g.First().CommandLine, Count: g.Count()))
+                    .OrderBy(s => s.Name);
 
                 foreach (var (child, cmd, count) in spawnCollapsed)
                 {
@@ -110,7 +110,7 @@ public static class MetadataExporter
                 sb.AppendLine();
             }
 
-            var dropped = p.ExeDropPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var dropped = p.ExeDropPaths.Keys.ToList();
             if (dropped.Count > 0)
             {
                 anyContent = true;

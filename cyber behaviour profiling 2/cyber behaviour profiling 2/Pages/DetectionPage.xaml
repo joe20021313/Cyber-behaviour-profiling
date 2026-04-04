@@ -45,42 +45,70 @@
 
         <!-- INPUT BAR -->
         <Border Grid.Row="0" Style="{StaticResource PanelCard}" Padding="14,10" Margin="0,0,0,12">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                <Border x:Name="DropZone" Grid.Column="0"
-                        AllowDrop="True" CornerRadius="6" Padding="10,6"
-                        BorderThickness="1.5"
-                        Background="{DynamicResource ControlFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
-                        DragEnter="DropZone_DragEnter"
-                        DragLeave="DropZone_DragLeave"
-                        Drop="DropZone_Drop">
-                    <Grid>
-                        <TextBlock x:Name="HintText"
-                                   Text="Drop .exe  or type process name..."
+                    <Grid Grid.Column="0">
+                        <ComboBox x:Name="ProcessDropdown"
+                                  IsEditable="False" FontSize="13"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Stretch"
+                                  SelectionChanged="ProcessDropdown_SelectionChanged"/>
+                        <TextBlock x:Name="DropdownHint"
+                                   Text="Select a running process..."
                                    IsHitTestVisible="False"
                                    VerticalAlignment="Center"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   FontSize="13"/>
-                        <TextBox x:Name="ProcessInput"
-                                 Background="Transparent" BorderThickness="0"
-                                 FontSize="13" VerticalAlignment="Center"
-                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                 CaretBrush="{DynamicResource TextFillColorPrimaryBrush}"
-                                 TextChanged="ProcessInput_TextChanged"/>
+                                   Margin="12,0,0,0"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                     </Grid>
-                </Border>
 
-                <ui:Button Grid.Column="1" Content="Browse"
-                           Margin="8,0,0,0" Click="BrowseButton_Click"/>
-                <ui:Button x:Name="StartButton" Grid.Column="2" Content="Start"
-                           Appearance="Primary" Margin="8,0,0,0" Click="StartButton_Click"/>
-            </Grid>
+                    <ui:Button Grid.Column="1" Content="Add"
+                               Margin="8,0,0,0" Click="AddProcess_Click"/>
+                    <ui:Button Grid.Column="2" Content="Browse"
+                               Margin="8,0,0,0" Click="BrowseButton_Click"/>
+                    <ui:Button Grid.Column="3" Content="Refresh"
+                               Margin="8,0,0,0" Click="RefreshProcessList_Click"/>
+                    <ui:Button x:Name="StartButton" Grid.Column="4" Content="Start"
+                               Appearance="Primary" Margin="8,0,0,0" Click="StartButton_Click"/>
+                </Grid>
+
+                <!-- Selected processes as removable tags -->
+                <ItemsControl x:Name="SelectedProcessList" Margin="0,8,0,0">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border CornerRadius="4" Padding="8,4" Margin="0,0,6,4"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding}" FontSize="12"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                    <Button Content="✕" FontSize="10"
+                                            Background="Transparent" BorderThickness="0"
+                                            Padding="4,0" Margin="6,0,0,0"
+                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                            Tag="{Binding}" Click="RemoveProcess_Click"
+                                            Cursor="Hand"/>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
         </Border>
 
         <Grid Grid.Row="1">
@@ -96,11 +124,12 @@
                                Text="RESULT"
                                HorizontalAlignment="Center" Margin="0,0,0,10"/>
 
-                    <TextBlock x:Name="ScoreLabel"
-                               Text="READY" FontSize="42" FontWeight="Bold"
-                               HorizontalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                               Margin="0,0,0,10"/>
+                    <Viewbox MaxHeight="50" Stretch="Uniform"
+                             HorizontalAlignment="Center" Margin="0,0,0,10">
+                        <TextBlock x:Name="ScoreLabel"
+                                   Text="READY" FontSize="42" FontWeight="Bold"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                    </Viewbox>
 
                     <Border x:Name="SeverityBadge"
                             CornerRadius="4" Padding="16,4"
@@ -120,21 +149,13 @@
                                Margin="0,0,0,18"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
-                    <ui:Button x:Name="DownloadReportButton"
-                               Content="Download Report"
-                               Appearance="Secondary"
+                    <ui:Button x:Name="ShowResultsButton"
+                               Content="Show Results"
+                               Appearance="Primary"
                                HorizontalAlignment="Center"
                                Margin="0,0,0,14"
                                Visibility="Collapsed"
-                               Click="DownloadReport_Click"/>
-
-                    <ui:Button x:Name="DownloadMetadataButton"
-                               Content="Download Lifecycle Metadata"
-                               Appearance="Secondary"
-                               HorizontalAlignment="Center"
-                               Margin="0,0,0,14"
-                               Visibility="Collapsed"
-                               Click="DownloadMetadata_Click"/>
+                               Click="ShowResults_Click"/>
 
                     <Grid x:Name="ScoreBarContainer" Height="14" Visibility="Collapsed">
                         <Border CornerRadius="7" Opacity="0.2">
@@ -181,53 +202,14 @@
                                    Text="ACTIVITY" Margin="0,0,0,12"/>
 
                         <TextBlock x:Name="EmptyEventsText" Grid.Row="1"
-                                   Text="No events yet -- start monitoring a process."
+                                   Text="No events yet, start monitoring a process."
                                    FontSize="13" VerticalAlignment="Center" HorizontalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
                         <ScrollViewer Grid.Row="1"
                                       VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
-                            <ItemsControl x:Name="EventTiles">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel Orientation="Horizontal"/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Button Style="{StaticResource TileButton}"
-                                                Tag="{Binding}" Click="EventTile_Click"
-                                                Width="140" Height="82"
-                                                Margin="0,0,10,10" Cursor="Hand">
-                                            <Border CornerRadius="8" Padding="12,10"
-                                                    Width="140" Height="82"
-                                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                                    BorderThickness="1"
-                                                    BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-                                                <Grid>
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="*"/>
-                                                        <RowDefinition Height="Auto"/>
-                                                    </Grid.RowDefinitions>
-                                                    <TextBlock Text="{Binding DisplayLabel}"
-                                                               FontSize="13" FontWeight="SemiBold"
-                                                               VerticalAlignment="Center"
-                                                               Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <StackPanel Grid.Row="1" Orientation="Horizontal">
-                                                        <Border Background="{Binding TileBrush}"
-                                                                CornerRadius="3" Padding="5,2" Margin="0,0,6,0">
-                                                            <TextBlock Text="{Binding CountLabel}"
-                                                                       FontSize="10" Foreground="White"
-                                                                       FontWeight="SemiBold"/>
-                                                        </Border>
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            <StackPanel x:Name="TileContainer" />
                         </ScrollViewer>
                     </Grid>
                 </Border>
@@ -301,21 +283,25 @@
                 MouseDown="GreyOverlay_MouseDown"/>
 
         <!-- EXPANDABLE TIMELINE PANEL -->
-        <Border Grid.Row="2" Style="{StaticResource PanelCard}" Margin="0,10,0,0">
+        <Border Grid.Row="2" Style="{StaticResource PanelCard}" Margin="0,10,0,0"
+                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}" BorderThickness="1">
             <StackPanel>
 
                 <Button Style="{StaticResource TileButton}" Cursor="Hand"
                         Click="ReportHeader_Click">
-                    <DockPanel Margin="16,12">
-                        <TextBlock Style="{StaticResource SectionLabel}"
-                                   Text="TIMELINE" VerticalAlignment="Center"
-                                   DockPanel.Dock="Left"/>
-                        <TextBlock x:Name="ReportChevron" Text="^"
-                                   FontSize="9" VerticalAlignment="Center"
-                                   HorizontalAlignment="Right"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                   DockPanel.Dock="Right"/>
-                    </DockPanel>
+                    <Border Background="Transparent" CornerRadius="10" Padding="0"
+                            BorderThickness="0">
+                        <DockPanel Margin="16,12">
+                            <TextBlock Style="{StaticResource SectionLabel}"
+                                       Text="TIMELINE" VerticalAlignment="Center"
+                                       DockPanel.Dock="Left"/>
+                            <TextBlock x:Name="ReportChevron" Text="▲"
+                                       FontSize="9" VerticalAlignment="Center"
+                                       HorizontalAlignment="Right"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       DockPanel.Dock="Right"/>
+                        </DockPanel>
+                    </Border>
                 </Button>
 
                 <Border x:Name="ReportCardContent" MaxHeight="0" ClipToBounds="True">

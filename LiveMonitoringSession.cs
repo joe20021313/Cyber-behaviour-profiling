@@ -9,10 +9,11 @@ using System.IO;
 using System.Linq;
 using System.Runtime.Versioning;
 using System.Threading;
+using System.Xml;
 
 namespace Cyber_behaviour_profiling
 {
-    public sealed class MonitoringEventUpdate
+    public class MonitoringEventUpdate
     {
         public int ProcessId { get; init; }
         public string ProcessName { get; init; } = "";
@@ -24,28 +25,31 @@ namespace Cyber_behaviour_profiling
         public int AttemptCount { get; init; }
     }
 
-    public sealed class RawActivityUpdate
+    public class RawActivityUpdate
     {
         public string ActivityType { get; init; } = "";
         public string Detail { get; init; } = "";
         public string ProcessName { get; init; } = "";
+        public string TargetProcess { get; init; } = "";
         public int ProcessId { get; init; }
         public DateTime Timestamp { get; init; }
     }
 
-    public sealed class MonitoringSessionResult
+    public class MonitoringSessionResult
     {
-        public string TargetProcess { get; init; } = "";
+        public List<string> TargetProcesses { get; init; } = new();
+        public string TargetProcess => string.Join(", ", TargetProcesses);
         public string OverallGrade { get; init; } = "SAFE";
-        public string OverallStory { get; init; } = "SAFE — No suspicious activity detected.";
+
         public List<AttackNarrative> Narratives { get; init; } = new();
         public List<ProcessProfile> MergedProfiles { get; init; } = new();
     }
 
-    public sealed class LiveMonitoringSession : IDisposable
+    public  class LiveMonitoringSession : IDisposable
     {
         private readonly object _sync = new();
         private readonly HashSet<uint> _monitoredPids = new();
+        private readonly Dictionary<uint, string> _pidToTarget = new();
 
         private TraceEventSession? _userSession;
         private TraceEventSession? _dnsSession;
@@ -56,7 +60,7 @@ namespace Cyber_behaviour_profiling
         private Thread? _dnsThread;
         private Thread? _kernelThread;
         private Thread? _psThread;
-        private string _targetProcess = "";
+        private HashSet<string> _targetProcesses = new(StringComparer.OrdinalIgnoreCase);
         private bool _isRunning;
         private bool _powerShellLoggingEnabled;
         private Timer? _snapshotTimer;
@@ -65,7 +69,7 @@ namespace Cyber_behaviour_profiling
         public event Action<MonitoringEventUpdate>? EventObserved;
         public event Action<RawActivityUpdate>? ActivityObserved;
 
-        public bool IsRunning
+        public bool IsRunning // prevents race conditions.
         {
             get
             {
@@ -74,10 +78,15 @@ namespace Cyber_behaviour_profiling
             }
         }
 
-        public void Start(string targetProcess, string dataFilePath, bool enablePowerShellLogging = false)
+        public void Start(IEnumerable<string> targetProcesses, string dataFilePath, bool enablePowerShellLogging = false)
         {
-            if (string.IsNullOrWhiteSpace(targetProcess))
-                throw new ArgumentException("A process name is required.", nameof(targetProcess));
+            var targets = targetProcesses
+                .Select(t => Path.GetFileNameWithoutExtension(t.Trim()).ToLowerInvariant())
+                .Where(t => !string.IsNullOrEmpty(t))
+                .ToList();
+
+            if (targets.Count == 0)
+                throw new ArgumentException("At least one process name is required.", nameof(targetProcesses));
 
             if (!File.Exists(dataFilePath))
                 throw new FileNotFoundException("Could not find data.json for the monitoring rules.", dataFilePath);
@@ -87,10 +96,16 @@ namespace Cyber_behaviour_profiling
                 if (_isRunning)
                     throw new InvalidOperationException("Monitoring is already running.");
 
-                _targetProcess = Path.GetFileNameWithoutExtension(targetProcess.Trim()).ToLowerInvariant();
+                _targetProcesses = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
                 _monitoredPids.Clear();
-                foreach (var process in Process.GetProcessesByName(_targetProcess))
-                    _monitoredPids.Add((uint)process.Id);
+                _pidToTarget.Clear();
+                foreach (var name in _targetProcesses)
+                    foreach (var process in Process.GetProcessesByName(name))
+                    {
+                        uint pid = (uint)process.Id;
+                        _monitoredPids.Add(pid);
+                        _pidToTarget[pid] = name;
+                    }
 
                 _powerShellLoggingEnabled = enablePowerShellLogging;
 
@@ -111,7 +126,7 @@ namespace Cyber_behaviour_profiling
 
                 StartSysmonWatcher();
                 StartEtwSessions();
-                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 2000, 2000);
+                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000); // Timer takes a snapshot every 1 second to help with detection of file access patterns and other anomalies.
                 _isRunning = true;
             }
         }
@@ -131,16 +146,14 @@ namespace Cyber_behaviour_profiling
             try { _snapshotTimer?.Dispose(); } catch { }
             _snapshotTimer = null;
 
-            try
-            {
+
                 if (_sysmonWatcher != null)
                 {
                     _sysmonWatcher.Enabled = false;
                     _sysmonWatcher.EventRecordWritten -= SysmonWatcher_EventRecordWritten;
                     _sysmonWatcher.Dispose();
                 }
-            }
-            catch { }
+            
 
             StopSession(_kernelSession, _kernelThread);
             StopSession(_userSession, _userThread);
@@ -156,6 +169,7 @@ namespace Cyber_behaviour_profiling
             _userThread = null;
             _dnsThread = null;
             _psThread = null;
+            _pidToTarget.Clear();
 
             return BuildResult();
         }
@@ -184,7 +198,49 @@ namespace Cyber_behaviour_profiling
 
         private void ProcessSysmonEvent(EventRecord record)
         {
-            Program.ProcessSysmonEvent(record, _targetProcess);
+            try
+            {
+                string xml = record.ToXml();
+                var doc = new XmlDocument();
+                doc.LoadXml(xml);
+
+                var eventId = record.Id;
+                var nsMgr = new XmlNamespaceManager(doc.NameTable);
+                nsMgr.AddNamespace("ns", "http://schemas.microsoft.com/win/2004/08/events/event");
+
+                var imageNode = doc.SelectSingleNode("//ns:Data[@Name='Image']", nsMgr);
+                string image = imageNode?.InnerText?.ToLower() ?? "";
+                if (!_targetProcesses.Any(t => image.Contains(t))) return;
+
+                var dataNodes = doc.SelectNodes("//ns:Data", nsMgr);
+                string destinationHostname = "";
+                string targetImage = "";
+                int pid = 0;
+                foreach (XmlNode node in dataNodes)
+                {
+                    string name = node.Attributes?["Name"]?.Value ?? "";
+                    string value = node.InnerText;
+                    if (name == "DestinationHostname") destinationHostname = value;
+                    if (name == "TargetImage") targetImage = value.ToLower();
+                    if (name == "ProcessId" && int.TryParse(value, out int parsedPid)) pid = parsedPid;
+                }
+
+                if (eventId == 3 && !string.IsNullOrEmpty(destinationHostname))
+                    MapToData.EvaluateNetworkConnection(pid, image, destinationHostname);
+
+               
+                if (eventId == 10 && targetImage.Contains("lsass"))
+                    MapToData.AddEventToProfile(pid, image, "LsassAccess", "lsass.exe", targetImage, "lsass_access", "Sysmon");
+
+                
+                if (eventId == 8 && !string.IsNullOrEmpty(targetImage))
+                    MapToData.AddEventToProfile(pid, image, "RemoteThreadInjection", targetImage, targetImage, "process_injection", "Sysmon");
+
+               
+                if (eventId == 25)
+                    MapToData.AddEventToProfile(pid, image, "ProcessTampering", image, image, "process_tampering", "Sysmon");
+            }
+            catch { }
         }
 
         private void StartEtwSessions()
@@ -293,18 +349,23 @@ namespace Cyber_behaviour_profiling
             {
                 if (_monitoredPids.Contains((uint)data.ParentID))
                 {
-                    _monitoredPids.Add((uint)data.ProcessID);
-
-                    string childName = !string.IsNullOrEmpty(data.ImageFileName)
-                        ? Path.GetFileName(data.ImageFileName)
+                    string childImagePath = data.ImageFileName ?? "";
+                    string childName = !string.IsNullOrEmpty(childImagePath)
+                        ? Path.GetFileName(childImagePath)
                         : (data.ProcessName ?? "unknown");
 
                     string childLower = Path.GetFileNameWithoutExtension(childName).ToLowerInvariant();
                     if (childLower == "conhost")
                         return;
 
+                    _monitoredPids.Add((uint)data.ProcessID);
+                    if (_pidToTarget.TryGetValue((uint)data.ParentID, out var parentTarget))
+                        _pidToTarget[(uint)data.ProcessID] = parentTarget;
+
                     FireActivity("Process", $"{childName} {data.CommandLine ?? ""}".Trim(), childName, data.ProcessID);
-                    MapToData.EvaluateProcessSpawn(data.ParentID, _targetProcess, data.ProcessID, childName, data.CommandLine ?? "");
+                    string parentName = MapToData.ActiveProfiles.TryGetValue(data.ParentID, out var pp)
+                        ? pp.ProcessName : "unknown";
+                    MapToData.EvaluateProcessSpawn(data.ParentID, parentName, data.ProcessID, childName, childImagePath, data.CommandLine ?? "");
                 }
             };
 
@@ -330,7 +391,7 @@ namespace Cyber_behaviour_profiling
             _psSession.Source.Dynamic.All += data =>
             {
                 if (!IsRunning) return;
-                if ((int)data.ID != 4104) return;
+                if ((int)data.ID != 4104) return; // ensures that we only get the commands that are actually executed, through powershell
                 if (!ShouldMonitor(data.ProcessName, (uint)data.ProcessID)) return;
 
                 try
@@ -338,7 +399,7 @@ namespace Cyber_behaviour_profiling
                     string scriptText = "";
                     int idx = Array.IndexOf(data.PayloadNames, "ScriptBlockText");
                     if (idx >= 0)
-                        scriptText = data.PayloadValue(idx)?.ToString() ?? "";
+                        scriptText = data.PayloadValue(idx)?.ToString() ?? ""; // getting the actual script text that was executed, which is super useful for detection and also for the narrative later on. We truncate it to a reasonable length for display purposes, but the full text is still stored in the profile for analysis.
 
                     if (string.IsNullOrWhiteSpace(scriptText)) return;
 
@@ -364,7 +425,12 @@ namespace Cyber_behaviour_profiling
         {
             using var key = Registry.LocalMachine.OpenSubKey(
                 @"SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging");
-            return key?.GetValue("EnableScriptBlockLogging") is int v && v == 1;
+            if (key != null)
+            {
+                var value = key.GetValue("EnableScriptBlockLogging");
+                return value is int v && v == 1;
+            }
+            return false;
         }
 
         [SupportedOSPlatform("windows")]
@@ -373,6 +439,19 @@ namespace Cyber_behaviour_profiling
             using var key = Registry.LocalMachine.CreateSubKey(
                 @"SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging");
             key.SetValue("EnableScriptBlockLogging", 1, RegistryValueKind.DWord);
+        }
+
+        [SupportedOSPlatform("windows")]
+        public static void DisableScriptBlockLogging()
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging", writable: true);
+            if (key == null) return;
+            key.DeleteValue("EnableScriptBlockLogging", throwOnMissingValue: false);
+            // Remove the key entirely if we left it empty
+            var parent = Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Policies\Microsoft\Windows\PowerShell", writable: true);
+            parent?.DeleteSubKeyTree("ScriptBlockLogging", throwOnMissingSubKey: false);
         }
 
         private void UserSource_All(Microsoft.Diagnostics.Tracing.TraceEvent data)
@@ -440,9 +519,12 @@ namespace Cyber_behaviour_profiling
             if (_monitoredPids.Contains(pid)) return true;
             if (string.IsNullOrEmpty(processName)) return false;
             string lower = processName.ToLowerInvariant();
-            if (lower == _targetProcess || lower == _targetProcess + ".exe")
+            string noExt = lower.EndsWith(".exe") ? lower[..^4] : lower;
+            if (_targetProcesses.Contains(lower) || _targetProcesses.Contains(noExt))
             {
                 _monitoredPids.Add(pid);
+                string target = _targetProcesses.Contains(noExt) ? noExt : lower;
+                _pidToTarget[pid] = target;
                 return true;
             }
             return false;
@@ -456,88 +538,68 @@ namespace Cyber_behaviour_profiling
         private void FireActivity(string activityType, string detail, string processName, int pid)
         {
             if (string.IsNullOrEmpty(detail)) return;
-            if (IsNoisePath(activityType, detail)) return;
+            if (detail.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase)) return;
+            if (detail.StartsWith(@"\??\pipe\", StringComparison.OrdinalIgnoreCase)) return;
+
+            string target = _pidToTarget.TryGetValue((uint)pid, out var t) ? t : processName;
 
             ActivityObserved?.Invoke(new RawActivityUpdate
             {
                 ActivityType = activityType,
                 Detail = detail,
                 ProcessName = processName,
+                TargetProcess = target,
                 ProcessId = pid,
                 Timestamp = DateTime.Now
             });
         }
 
-        private static bool IsNoisePath(string activityType, string detail)
-        {
-            string lower = detail.ToLowerInvariant();
 
-            if (lower.StartsWith("\\device\\") || lower.StartsWith("\\??\\pipe\\"))
-                return true;
-
-            if (activityType.StartsWith("File"))
-            {
-                string ext = Path.GetExtension(lower);
-                if (ext is ".dll" or ".sys" or ".pnf" or ".mui" or ".nls" or ".dat"
-                        or ".ttf" or ".otf" or ".ttc" or ".cat" or ".manifest"
-                        or ".etl" or ".log" or ".blf" or ".regtrans-ms")
-                    return true;
-
-                if (lower.Contains("\\windows\\system32\\") ||
-                    lower.Contains("\\windows\\syswow64\\") ||
-                    lower.Contains("\\windows\\winsxs\\") ||
-                    lower.Contains("\\windows\\fonts\\") ||
-                    lower.Contains("\\windows\\globalization\\") ||
-                    lower.Contains("\\windows\\assembly\\") ||
-                    lower.Contains("\\windows\\microsoft.net\\") ||
-                    lower.Contains("\\windows\\installer\\"))
-                    return true;
-
-                if (lower.Contains("\\.nuget\\") ||
-                    lower.Contains("\\assembly\\nativeimages") ||
-                    lower.Contains("\\microsoft\\clr_"))
-                    return true;
-            }
-
-            if (activityType == "Registry")
-            {
-                if (lower.Contains("\\software\\classes\\") ||
-                    lower.Contains("\\software\\microsoft\\windows\\currentversion\\explorer\\") ||
-                    lower.Contains("\\software\\microsoft\\windows nt\\currentversion\\fontsubstitutes") ||
-                    lower.Contains("\\software\\microsoft\\windows nt\\currentversion\\gre_initialize") ||
-                    lower.Contains("\\software\\policies\\") ||
-                    lower.Contains("\\control panel\\desktop\\") ||
-                    lower.Contains("\\currentcontrolset\\control\\nls\\") ||
-                    lower.Contains("\\currentcontrolset\\control\\session manager\\") ||
-                    lower.Contains("\\environment") ||
-                    lower.Contains("\\.default\\") ||
-                    lower.Contains("\\volatile environment"))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private MonitoringSessionResult BuildResult()
+        private MonitoringSessionResult BuildResult() // this is where behaviour analysor is iniated
         {
             var mergedProfiles = MapToData.GetMergedProfiles();
-            var narratives = mergedProfiles
-                .Select(profile =>
-                {
-                    profile.DirectorySnapshotBefore = _baselineSnapshot;
-                    var report = BehaviorAnalyzer.Analyze(profile);
-                    return AttackNarrator.BuildNarrative(profile, report);
-                })
-                .OrderByDescending(n => GradeRank(n.Grade))
-                .ThenByDescending(n => n.TotalSeconds)
-                .ToList();
 
-            var top = narratives.FirstOrDefault();
+            // Ensure every target process appears in the report, even if no events were captured
+            var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in mergedProfiles)
+                profileNames.Add(p.ProcessName?.ToLowerInvariant() ?? "");
+
+            foreach (var target in _targetProcesses)
+            {
+                if (!profileNames.Contains(target))
+                {
+                    mergedProfiles.Add(new ProcessProfile // creates blank profile
+                    {
+                        ProcessId = 0,
+                        ProcessName = target,
+                        FirstSeen = DateTime.Now,
+                    });
+                }
+            }
+
+            var narratives = new List<AttackNarrative>();
+            foreach (var profile in mergedProfiles) // runs detection methodse
+            {
+                profile.DirectorySnapshotBefore = _baselineSnapshot;
+                var report = BehaviorAnalyzer.Analyze(profile);
+                var narrative = AttackNarrator.BuildNarrative(profile, report);
+                narratives.Add(narrative);
+            }
+
+            narratives.Sort((a, b) =>
+            {
+                int gradeCompare = GradeRank(b.Grade).CompareTo(GradeRank(a.Grade));
+                if (gradeCompare != 0) return gradeCompare;
+                return b.TotalSeconds.CompareTo(a.TotalSeconds);
+            });
+
+            AttackNarrative top = narratives.Count > 0 ? narratives[0] : null;
+
             return new MonitoringSessionResult
             {
-                TargetProcess = _targetProcess,
-                OverallGrade = top?.Grade ?? "SAFE",
-                OverallStory = top?.OverallStory ?? "SAFE — No suspicious activity detected.",
+                TargetProcesses = _targetProcesses.ToList(),
+                OverallGrade = top?.Grade,
+
                 Narratives = narratives,
                 MergedProfiles = mergedProfiles
             };

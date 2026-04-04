@@ -16,7 +16,8 @@ namespace Cyber_behaviour_profiling
     public static class AnomalyDetector
     {
         private const int K = 3;
-        private const int MinSamples = 5;
+        private const int MinSamples = 3;
+        private const int MinSamplesHistory = 2;
         private const double ZThreshold = 2.0;
 
         private static readonly string[] MetricNames =
@@ -99,8 +100,12 @@ namespace Cyber_behaviour_profiling
             var result = new AnomalyResult();
             var history = profile.AnomalyHistory;
 
-            if (history.Count < MinSamples)
+            if (history.Count < MinSamplesHistory)
                 return result;
+
+            // Reduced confidence when we have fewer than MinSamples snapshots
+            double confidenceMultiplier = history.Count < MinSamples ? 0.5 : 1.0;
+            int effectiveK = Math.Min(K, history.Count - 1);
 
             var normalized = Normalize(history);
 
@@ -114,7 +119,7 @@ namespace Cyber_behaviour_profiling
                     distances.Add(EuclideanDistance(normalized[i], normalized[j]));
                 }
                 distances.Sort();
-                allScores[i] = distances.Take(K).Average();
+                allScores[i] = distances.Take(effectiveK).Average();
             }
 
             double mean = allScores.Average();
@@ -157,7 +162,8 @@ namespace Cyber_behaviour_profiling
             }
 
             double severity = (worstScore - threshold) / (threshold > 0.001 ? threshold : 1);
-            result.Score = Math.Clamp((int)(severity * 25) + 15, 15, 45);
+            int rawScore = Math.Clamp((int)(severity * 25) + 15, 15, 45);
+            result.Score = (int)(rawScore * confidenceMultiplier);
 
             return result;
         }

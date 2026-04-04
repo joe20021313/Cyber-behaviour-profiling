@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -21,6 +22,7 @@ namespace cyber_behaviour_profiling_2.Pages
     {
         public string ActivityType { get; set; } = "";
         public string DisplayLabel { get; set; } = "";
+        public string OwnerProcess { get; set; } = "";
         public int TotalCount { get; set; }
         public string CountLabel => TotalCount > 9999
             ? $"{TotalCount / 1000.0:0.#}K"
@@ -69,9 +71,13 @@ namespace cyber_behaviour_profiling_2.Pages
     public partial class DetectionPage : Page
     {
         private bool _isMonitoring;
+        private bool _weEnabledScriptBlockLogging;
         private LiveMonitoringSession? _monitoringSession;
         private string? _lastReportPath;
         private string? _lastMetadataPath;
+        private MonitoringSessionResult? _lastResult;
+
+        private readonly ObservableCollection<string> _selectedProcesses = new(); // selected processes to update
 
         private readonly Dictionary<string, ActivityTileVM> _tileMap = new();
         private readonly List<ActivityTileVM> _tileList = new();
@@ -88,44 +94,52 @@ namespace cyber_behaviour_profiling_2.Pages
         public DetectionPage()
         {
             InitializeComponent();
-            UpdateResultDisplay("READY", "Enter a process name and start monitoring.");
+            UpdateResultDisplay("READY", "Select processes and start monitoring.");
             Unloaded += DetectionPage_Unloaded;
+
+            SelectedProcessList.ItemsSource = _selectedProcesses;
+            RefreshProcessList();
 
             _flushTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
             _flushTimer.Tick += FlushActivities;
         }
 
-        private void ProcessInput_TextChanged(object sender, TextChangedEventArgs e)
+        private void RefreshProcessList()
         {
-            HintText.Visibility = string.IsNullOrEmpty(ProcessInput.Text)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            var processes = Process.GetProcesses()
+                .Select(p => p.ProcessName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            ProcessDropdown.ItemsSource = processes;
         }
 
-        private void DropZone_DragEnter(object sender, DragEventArgs e)
+        private void RefreshProcessList_Click(object sender, RoutedEventArgs e)
         {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop))
-            {
-                e.Effects = DragDropEffects.Copy;
-                DropZone.BorderBrush = (Brush)FindResource("AccentFillColorDefaultBrush");
-            }
-            else
-            {
-                e.Effects = DragDropEffects.None;
-            }
-            e.Handled = true;
+            RefreshProcessList();
         }
 
-        private void DropZone_DragLeave(object sender, DragEventArgs e)
+        private void ProcessDropdown_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            DropZone.BorderBrush = (Brush)FindResource("ControlStrokeColorDefaultBrush");
+            DropdownHint.Visibility = ProcessDropdown.SelectedItem != null
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
 
-        private void DropZone_Drop(object sender, DragEventArgs e)
+        private void AddProcess_Click(object sender, RoutedEventArgs e)
         {
-            DropZone.BorderBrush = (Brush)FindResource("ControlStrokeColorDefaultBrush");
-            if (e.Data.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
-                ProcessInput.Text = Path.GetFileNameWithoutExtension(files[0]).ToLower();
+            if (ProcessDropdown.SelectedItem is not string selected) return;
+
+            string normalized = Path.GetFileNameWithoutExtension(selected).ToLowerInvariant();
+            if (!_selectedProcesses.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+                _selectedProcesses.Add(normalized);
+        }
+
+        private void RemoveProcess_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string name)
+                _selectedProcesses.Remove(name);
         }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -133,10 +147,18 @@ namespace cyber_behaviour_profiling_2.Pages
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
                 Filter = "Executables (*.exe)|*.exe",
-                Title = "Select process executable"
+                Title = "Select process executable(s)",
+                Multiselect = true
             };
             if (dlg.ShowDialog() == true)
-                ProcessInput.Text = Path.GetFileNameWithoutExtension(dlg.FileName).ToLower();
+            {
+                foreach (var file in dlg.FileNames)
+                {
+                    string name = Path.GetFileNameWithoutExtension(file).ToLowerInvariant();
+                    if (!_selectedProcesses.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        _selectedProcesses.Add(name);
+                }
+            }
         }
 
         private async void StartButton_Click(object sender, RoutedEventArgs e)
@@ -184,11 +206,7 @@ namespace cyber_behaviour_profiling_2.Pages
             {
                 _tilesDirty = false;
                 EmptyEventsText.Visibility = Visibility.Collapsed;
-
-                EventTiles.ItemsSource = null;
-                EventTiles.ItemsSource = _tileList
-                    .OrderByDescending(t => t.TotalCount)
-                    .ToList();
+                RebuildGroupedTiles();
             }
 
             if (_reportOpen)
@@ -205,8 +223,10 @@ namespace cyber_behaviour_profiling_2.Pages
 
             bool isChildEvent = _spawnedProcesses.TryGetValue(a.ProcessId, out string? childName);
 
-            if (isChildEvent)
+            string ownerProcess = !string.IsNullOrEmpty(a.TargetProcess) ? a.TargetProcess : a.ProcessName;
+            if (isChildEvent && childName != null)
             {
+               
                 string childKey = $"proc:{childName}:{a.ProcessId}";
                 if (!_tileMap.TryGetValue(childKey, out var childTile))
                 {
@@ -214,6 +234,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     {
                         ActivityType = childKey,
                         DisplayLabel = childName,
+                        OwnerProcess = ownerProcess,
                         TileBrush = new SolidColorBrush(Color.FromRgb(0xD3, 0x2F, 0x2F)),
                         IsProcessTile = true,
                         ProcessId = a.ProcessId,
@@ -235,15 +256,18 @@ namespace cyber_behaviour_profiling_2.Pages
             }
             else
             {
-                if (!_tileMap.TryGetValue(a.ActivityType, out var tile))
+                string tileKey = $"{ownerProcess}:{a.ActivityType}";
+                if (!_tileMap.TryGetValue(tileKey, out var tile))
                 {
                     tile = new ActivityTileVM
                     {
-                        ActivityType = a.ActivityType,
+                        ActivityType = tileKey,
                         DisplayLabel = a.ActivityType,
+                        OwnerProcess = ownerProcess,
                         TileBrush = ToActivityBrush(a.ActivityType),
+                        ProcessId = a.ProcessId,
                     };
-                    _tileMap[a.ActivityType] = tile;
+                    _tileMap[tileKey] = tile;
                     _tileList.Add(tile);
                 }
                 tile.TotalCount++;
@@ -278,7 +302,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     last.Time = timeStr;
                     return;
                 }
-            }
+            } // a
 
             _timeline.Add(new TimelineEntryVM
             {
@@ -293,6 +317,102 @@ namespace cyber_behaviour_profiling_2.Pages
 
             if (_timeline.Count > MaxTimelineEntries)
                 _timeline.RemoveAt(0);
+        }
+
+        private void RebuildGroupedTiles()
+        {
+            TileContainer.Children.Clear();
+
+            var grouped = _tileList
+                .GroupBy(t => t.OwnerProcess, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(g => g.Key);
+
+            foreach (var group in grouped)
+            {
+                var first = group.First();
+                string headerText = first.ProcessId > 0
+                    ? $"{group.Key.ToUpper()} (PID {first.ProcessId})"
+                    : group.Key.ToUpper();
+
+                var header = new TextBlock
+                {
+                    Text = headerText,
+                    Style = (Style)FindResource("SectionLabel"),
+                    Margin = new Thickness(0, 8, 0, 6),
+                    FontSize = 12,
+                };
+                TileContainer.Children.Add(header);
+
+                var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
+                foreach (var tile in group.OrderByDescending(t => t.TotalCount))
+                    wrap.Children.Add(CreateTileButton(tile));
+                TileContainer.Children.Add(wrap);
+            }
+        }
+
+        private Button CreateTileButton(ActivityTileVM tile)
+        {
+            var countText = new TextBlock
+            {
+                FontSize = 10,
+                Foreground = Brushes.White,
+                FontWeight = FontWeights.SemiBold,
+            };
+            countText.SetBinding(TextBlock.TextProperty,
+                new System.Windows.Data.Binding("CountLabel") { Source = tile });
+
+            var badge = new Border
+            {
+                Background = tile.TileBrush,
+                CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(5, 2, 5, 2),
+                Margin = new Thickness(0, 0, 6, 0),
+                Child = countText,
+            };
+
+            var label = new TextBlock
+            {
+                Text = tile.DisplayLabel,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)FindResource("TextFillColorPrimaryBrush"),
+            };
+
+            var grid = new Grid();
+            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(label, 0);
+            var badgePanel = new StackPanel { Orientation = Orientation.Horizontal };
+            badgePanel.Children.Add(badge);
+            Grid.SetRow(badgePanel, 1);
+            grid.Children.Add(label);
+            grid.Children.Add(badgePanel);
+
+            var border = new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12, 10, 12, 10),
+                Width = 140,
+                Height = 82,
+                Background = (Brush)FindResource("ControlFillColorDefaultBrush"),
+                BorderThickness = new Thickness(1),
+                BorderBrush = (Brush)FindResource("ControlStrokeColorDefaultBrush"),
+                Child = grid,
+            };
+
+            var btn = new Button
+            {
+                Style = (Style)FindResource("TileButton"),
+                Tag = tile,
+                Width = 140,
+                Height = 82,
+                Margin = new Thickness(0, 0, 10, 10),
+                Cursor = Cursors.Hand,
+                Content = border,
+            };
+            btn.Click += EventTile_Click;
+            return btn;
         }
 
         private void EventTile_Click(object sender, RoutedEventArgs e)
@@ -336,7 +456,7 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             ReportList.ItemsSource = _timeline.AsEnumerable().Reverse().Take(200).ToList();
             GreyOverlay.Visibility = Visibility.Visible;
-            ReportChevron.Text = "\u25B2";
+            ReportChevron.Text = "\u25BC";
             _reportOpen = true;
 
             var anim = new DoubleAnimation
@@ -348,9 +468,9 @@ namespace cyber_behaviour_profiling_2.Pages
             ReportCardContent.BeginAnimation(MaxHeightProperty, anim);
         }
 
-        private void CollapseReport()
+        private void CollapseReport() //change name
         {
-            ReportChevron.Text = "\u25BC";
+            ReportChevron.Text = "\u25B2";
             _reportOpen = false;
 
             var anim = new DoubleAnimation
@@ -371,20 +491,19 @@ namespace cyber_behaviour_profiling_2.Pages
             _spawnedProcesses.Clear();
             _lastReportPath = null;
             while (_activityQueue.TryDequeue(out _)) { }
-            EventTiles.ItemsSource = null;
+            TileContainer.Children.Clear();
             TimelineList.ItemsSource = null;
             ReportList.ItemsSource = null;
             EmptyEventsText.Visibility = Visibility.Visible;
             DetailRowDef.Height = new GridLength(0);
-            DownloadReportButton.Visibility = Visibility.Collapsed;
+            ShowResultsButton.Visibility = Visibility.Collapsed;
         }
 
         private async Task StartMonitoringAsync()
         {
-            string target = ProcessInput.Text.Trim();
-            if (string.IsNullOrWhiteSpace(target))
+            if (_selectedProcesses.Count == 0)
             {
-                MessageBox.Show("Enter a process name or browse for an executable first.",
+                MessageBox.Show("Select at least one process to monitor.",
                     "Process Required", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -403,8 +522,8 @@ namespace cyber_behaviour_profiling_2.Pages
                 {
                     var answer = MessageBox.Show(
                         "PowerShell ScriptBlock logging is not enabled.\n\n" +
-                        "Enable it now to capture PowerShell command content?\n\n" +
-                        "This writes a policy registry key under HKLM and requires admin rights. " +
+                        "Enable it?\n\n" +
+                        "This writes a policy registry key under HKLM and requires admin rights." +
                         "Process spawns will still be monitored regardless.",
                         "Enable PowerShell Detection",
                         MessageBoxButton.YesNo,
@@ -414,16 +533,17 @@ namespace cyber_behaviour_profiling_2.Pages
                     {
                         LiveMonitoringSession.EnableScriptBlockLogging();
                         enablePsLogging = true;
+                        _weEnabledScriptBlockLogging = true;
                     }
                     else
                     {
-                        psStatus = " | PowerShell script content: not monitored";
+                        psStatus = "Powershell conmmands will not be monitored";
                     }
                 }
             }
             catch
             {
-                psStatus = " | PowerShell detection unavailable (requires admin)";
+                psStatus = "Powershell conmmands will not be monitored";
             }
 
             try
@@ -432,14 +552,15 @@ namespace cyber_behaviour_profiling_2.Pages
                 _monitoringSession?.Dispose();
                 _monitoringSession = new LiveMonitoringSession();
                 _monitoringSession.ActivityObserved += OnActivityObserved;
-                _monitoringSession.Start(target, dataPath, enablePsLogging);
+                _monitoringSession.Start(_selectedProcesses.ToList(), dataPath, enablePsLogging);
 
                 _isMonitoring = true;
                 _flushTimer.Start();
-                ProcessInput.IsEnabled = false;
+                ProcessDropdown.IsEnabled = false;
                 StartButton.Content = "Stop";
+                string targetNames = string.Join(", ", _selectedProcesses);
                 UpdateResultDisplay("MONITORING",
-                    $"Watching '{Path.GetFileNameWithoutExtension(target).ToLowerInvariant()}' -- all activity shown live.{psStatus}");
+                    $"Watching {targetNames}");
                 await Task.CompletedTask;
             }
             catch (Exception ex)
@@ -447,7 +568,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 _flushTimer.Stop();
                 _monitoringSession?.Dispose();
                 _monitoringSession = null;
-                UpdateResultDisplay("READY", "Enter a process name and start monitoring.");
+                UpdateResultDisplay("READY", "Select processes and start monitoring.");
                 MessageBox.Show(ex.Message, "Unable to Start Monitoring",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -463,7 +584,7 @@ namespace cyber_behaviour_profiling_2.Pages
             while (_activityQueue.TryDequeue(out var a))
                 ProcessSingleActivity(a);
             _tilesDirty = false;
-            EventTiles.ItemsSource = _tileList.OrderByDescending(t => t.TotalCount).ToList();
+            RebuildGroupedTiles();
 
             try
             {
@@ -473,20 +594,25 @@ namespace cyber_behaviour_profiling_2.Pages
                 session.Dispose();
                 _monitoringSession = null;
 
+                if (_weEnabledScriptBlockLogging)
+                {
+                    LiveMonitoringSession.DisableScriptBlockLogging();
+                    _weEnabledScriptBlockLogging = false;
+                }
+
                 _isMonitoring = false;
-                ProcessInput.IsEnabled = true;
+                ProcessDropdown.IsEnabled = true;
                 StartButton.Content = "Start";
-                UpdateResultDisplay(result.OverallGrade, result.OverallStory);
+                UpdateResultDisplay(result.OverallGrade, GetReportVerdictText(result.OverallGrade));
 
+                _lastResult = result;
                 _lastReportPath = SaveReport(result);
-                DownloadReportButton.Visibility = Visibility.Visible;
-
                 _lastMetadataPath = SaveMetadata(result);
-                DownloadMetadataButton.Visibility = Visibility.Visible;
+                ShowResultsButton.Visibility = Visibility.Visible;
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, "Unable to Stop Monitoring",
+                MessageBox.Show(ex.Message, "Error",
                     MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
@@ -498,6 +624,13 @@ namespace cyber_behaviour_profiling_2.Pages
         private void DetectionPage_Unloaded(object sender, RoutedEventArgs e)
         {
             _flushTimer.Stop();
+
+            if (_weEnabledScriptBlockLogging)
+            {
+                try { LiveMonitoringSession.DisableScriptBlockLogging(); } catch { }
+                _weEnabledScriptBlockLogging = false;
+            }
+
             if (_monitoringSession == null) return;
 
             try
@@ -524,9 +657,9 @@ namespace cyber_behaviour_profiling_2.Pages
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 Title = "Save Report",
-                FileName = Path.GetFileName(_lastReportPath),
-                Filter = "Text files (*.txt)|*.txt",
-                DefaultExt = ".txt"
+                FileName = Path.ChangeExtension(Path.GetFileName(_lastReportPath), "md"),
+                Filter = "Markdown files (*.md)|*.md|Text files (*.txt)|*.txt",
+                DefaultExt = ".md"
             };
 
             if (dlg.ShowDialog() == true)
@@ -544,10 +677,11 @@ namespace cyber_behaviour_profiling_2.Pages
                 Directory.CreateDirectory(reportsDir);
 
                 string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-                string fileName = $"{result.TargetProcess}_{timestamp}.txt";
+                string safeName = string.Join("_", result.TargetProcesses);
+                string fileName = $"{safeName}_{timestamp}.md";
                 string filePath = Path.Combine(reportsDir, fileName);
 
-                string reportText = GenerateReport(result);
+                string reportText = GenerateMarkdownReport(result);
                 File.WriteAllText(filePath, reportText, Encoding.UTF8);
                 return filePath;
             }
@@ -565,7 +699,8 @@ namespace cyber_behaviour_profiling_2.Pages
                 Directory.CreateDirectory(reportsDir);
 
                 string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-                string fileName = $"{result.TargetProcess}_{timestamp}_metadata.txt";
+                string safeName = string.Join("_", result.TargetProcesses);
+                string fileName = $"{safeName}_{timestamp}_metadata.txt";
                 string filePath = Path.Combine(reportsDir, fileName);
 
                 string metadataText = MetadataExporter.Generate(result.MergedProfiles);
@@ -578,137 +713,125 @@ namespace cyber_behaviour_profiling_2.Pages
             }
         }
 
-        private void DownloadMetadata_Click(object sender, RoutedEventArgs e)
+        private void ShowResults_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(_lastMetadataPath) || !File.Exists(_lastMetadataPath))
+            if (_lastResult == null) return;
+            string markdown = GenerateMarkdownReport(_lastResult);
+            var window = new ResultsWindow(markdown, _lastReportPath, _lastMetadataPath)
             {
-                MessageBox.Show("No metadata available.", "Metadata", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var dlg = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "Save Lifecycle Metadata",
-                FileName = Path.GetFileName(_lastMetadataPath),
-                Filter = "Text files (*.txt)|*.txt",
-                DefaultExt = ".txt"
+                Owner = Window.GetWindow(this)
             };
-
-            if (dlg.ShowDialog() == true)
-            {
-                File.Copy(_lastMetadataPath, dlg.FileName, overwrite: true);
-                Process.Start(new ProcessStartInfo(dlg.FileName) { UseShellExecute = true });
-            }
+            window.ShowDialog();
         }
 
-        private string GenerateReport(MonitoringSessionResult result)
+        private static string GenerateMarkdownReport(MonitoringSessionResult result)
         {
             var sb = new StringBuilder();
-            string line = new('═', 60);
-            string thinLine = new('─', 60);
 
-            sb.AppendLine(line);
-            sb.AppendLine("  CYBER BEHAVIOUR PROFILING REPORT");
-            sb.AppendLine(line);
+            sb.AppendLine("# Cyber Behaviour Profiling Report");
             sb.AppendLine();
-            sb.AppendLine($"  Date:     {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"  Target:   {result.TargetProcess}");
-            sb.AppendLine($"  Grade:    {result.OverallGrade}");
-
-            var top = result.Narratives.FirstOrDefault();
-            if (top != null)
-                sb.AppendLine($"  Duration: {top.TotalSeconds:F1} seconds");
-
+            sb.AppendLine($"**Date:** {DateTime.Now:yyyy-MM-dd HH:mm:ss}  ");
+            foreach (var target in result.TargetProcesses)
+                sb.AppendLine($"**Target:** {target}  ");
+            sb.AppendLine($"**Overall Grade:** {result.OverallGrade}  ");
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("## Verdict");
+            sb.AppendLine();
+            sb.AppendLine(GetReportVerdictText(result.OverallGrade));
             sb.AppendLine();
 
-            sb.AppendLine(thinLine);
-            sb.AppendLine("  VERDICT");
-            sb.AppendLine(thinLine);
-            sb.AppendLine();
-            sb.AppendLine($"  {GetReportVerdictText(result.OverallGrade)}");
-            sb.AppendLine();
-
-            var nonSafe = result.Narratives
-                .Where(n => n.Grade != "SAFE")
-                .ToList();
-
-            if (nonSafe.Count == 0)
+            foreach (var narrative in result.Narratives)
             {
-                sb.AppendLine("  No suspicious activity was observed during this session.");
+                sb.AppendLine("---");
                 sb.AppendLine();
-            }
+                sb.AppendLine($"## {narrative.ProcessName} (PID {narrative.ProcessId}) — {narrative.Grade}");
+                sb.AppendLine();
+                sb.AppendLine($"**Signature:** {(narrative.IsSigned ? $"Verified — signed by {narrative.SignerName}" : "Not verified (no digital signature)")}  ");
+                sb.AppendLine($"**Started:** {narrative.FirstSeen:yyyy-MM-dd HH:mm:ss}  ");
+                sb.AppendLine($"**Duration:** {narrative.TotalSeconds:F1}s  ");
+                sb.AppendLine();
 
-            foreach (var narrative in nonSafe)
-            {
-                var section = new StringBuilder();
-                bool hasContent = false;
+                if (narrative.Grade == "SAFE")
+                {
+                    if (narrative.SafeReasons.Count > 0)
+                    {
+                        sb.AppendLine("### Why considered safe");
+                        sb.AppendLine();
+                        foreach (var reason in narrative.SafeReasons)
+                            sb.AppendLine($"- {reason}");
+                        sb.AppendLine();
+                    }
+                    sb.AppendLine("> Note: This assessment is limited to what was observed during the monitoring window.");
+                    sb.AppendLine();
+                    continue;
+                }
 
                 if (narrative.SpawnedCommands.Count > 0)
                 {
-                    section.AppendLine("  Processes launched:");
-                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var (childName, cmdLine) in narrative.SpawnedCommands)
+                    sb.AppendLine("### Processes Launched");
+                    sb.AppendLine();
+                    var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var spawn in narrative.SpawnedCommands)
                     {
-                        string label = DescribeCommand(childName, cmdLine);
+                        string label = DescribeCommand(spawn.Name, spawn.CommandLine);
                         if (seen.Add(label))
-                            section.AppendLine($"    → {label}");
+                            sb.AppendLine($"- {label}");
                     }
-                    section.AppendLine();
-                    hasContent = true;
-                }
-
-                if (narrative.DroppedFiles.Count > 0)
-                {
-                    section.AppendLine("  Files dropped:");
-                    foreach (var path in narrative.DroppedFiles.Distinct(StringComparer.OrdinalIgnoreCase))
-                        section.AppendLine($"    → {Path.GetFileName(path)}  [{path}]");
-                    section.AppendLine();
-                    hasContent = true;
+                    sb.AppendLine();
                 }
 
                 var credSteps = narrative.Timeline
-                    .Where(s => s.Tactic == "CredentialAccess")
-                    .ToList();
+                    .Where(s => s.Tactic == "CredentialAccess").ToList();
                 if (credSteps.Count > 0)
                 {
-                    section.AppendLine("  Credential files accessed:");
+                    sb.AppendLine("### Credential Access");
+                    sb.AppendLine();
                     foreach (var s in DeduplicateSteps(credSteps))
                     {
-                        section.AppendLine($"    → {s.Headline}");
-                        if (!string.IsNullOrWhiteSpace(s.Detail) && s.Detail != s.Headline)
-                            section.AppendLine($"      Path: {s.Detail}");
+                        string detail = !string.IsNullOrWhiteSpace(s.Detail) && s.Detail != s.Headline
+                            ? $"{s.Headline} — `{s.Detail}`"
+                            : s.Headline;
+                        sb.AppendLine($"- {detail}");
                     }
-                    section.AppendLine();
-                    hasContent = true;
+                    sb.AppendLine();
                 }
 
                 var registrySteps = narrative.Timeline
-                    .Where(s => s.Category == "Registry")
-                    .ToList();
+                    .Where(s => s.Category == "Registry").ToList();
                 if (registrySteps.Count > 0)
                 {
-                    section.AppendLine("  Registry keys modified:");
+                    sb.AppendLine("### Registry Keys Accessed");
+                    sb.AppendLine();
                     foreach (var s in DeduplicateSteps(registrySteps))
-                        section.AppendLine($"    → {s.Headline}");
-                    section.AppendLine();
-                    hasContent = true;
+                        sb.AppendLine($"- {s.Headline}");
+                    sb.AppendLine();
                 }
 
                 var networkSteps = narrative.Timeline
-                    .Where(s => s.Category == "Network")
-                    .ToList();
+                    .Where(s => s.Category == "Network").ToList();
                 if (networkSteps.Count > 0)
                 {
-                    section.AppendLine("  Network connections:");
-                    var seenNet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    sb.AppendLine("### Network Connections");
+                    sb.AppendLine();
+                    var seenNet = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var s in networkSteps)
                     {
                         string dest = s.Detail ?? s.Headline;
                         if (seenNet.Add(dest))
-                            section.AppendLine($"    → {dest}");
+                            sb.AppendLine($"- {dest}");
                     }
-                    section.AppendLine();
-                    hasContent = true;
+                    sb.AppendLine();
+                }
+
+                if (narrative.DroppedFiles.Count > 0)
+                {
+                    sb.AppendLine("### Files Dropped");
+                    sb.AppendLine();
+                    foreach (var path in narrative.DroppedFiles.Distinct(StringComparer.OrdinalIgnoreCase))
+                        sb.AppendLine($"- `{Path.GetFileName(path)}`  —  {path}");
+                    sb.AppendLine();
                 }
 
                 var deleted = narrative.DeletedFiles
@@ -717,51 +840,38 @@ namespace cyber_behaviour_profiling_2.Pages
                     .ToList();
                 if (deleted.Count > 0)
                 {
-                    section.AppendLine($"  Files deleted ({deleted.Count} total):");
+                    sb.AppendLine($"### Files Deleted ({deleted.Count} total)");
+                    sb.AppendLine();
                     foreach (var path in deleted.Take(10))
-                        section.AppendLine($"    → {Path.GetFileName(path)}  [{path}]");
+                        sb.AppendLine($"- `{Path.GetFileName(path)}`  —  {path}");
                     if (deleted.Count > 10)
-                        section.AppendLine($"    ... and {deleted.Count - 10} more files");
-                    section.AppendLine();
-                    hasContent = true;
+                        sb.AppendLine($"- *...and {deleted.Count - 10} more*");
+                    sb.AppendLine();
                 }
 
                 if (narrative.AnomalyFindings.Count > 0)
                 {
-                    section.AppendLine("  Unusual activity:");
+                    sb.AppendLine("### Anomalies Detected");
+                    sb.AppendLine();
                     foreach (var a in narrative.AnomalyFindings)
-                        section.AppendLine($"    → {SimplifyAnomaly(a)}");
-                    section.AppendLine();
-                    hasContent = true;
+                        sb.AppendLine($"- {SimplifyAnomaly(a)}");
+                    sb.AppendLine();
                 }
 
-                bool hasSelfDelete = narrative.DecisionReasons
-                    .Any(r => r.Contains("Self-Deletion", StringComparison.OrdinalIgnoreCase));
-                if (hasSelfDelete)
+                if (narrative.DecisionReasons.Count > 0)
                 {
-                    section.AppendLine("  Self-deletion:");
-                    section.AppendLine("    → The process attempted to delete its own files after running.");
-                    section.AppendLine();
-                    hasContent = true;
+                    sb.AppendLine("### Detection Signals");
+                    sb.AppendLine();
+                    foreach (var r in narrative.DecisionReasons)
+                        sb.AppendLine($"- {r}");
+                    sb.AppendLine();
                 }
-
-                if (!hasContent) continue;
-
-                sb.AppendLine(thinLine);
-                sb.AppendLine($"  PROCESS — {narrative.ProcessName} (PID {narrative.ProcessId})");
-                sb.AppendLine($"  {(narrative.IsSigned ? $"Verified (signed by {narrative.SignerName})" : "Not verified (no digital signature)")}");
-                sb.AppendLine(thinLine);
-                sb.AppendLine();
-                sb.Append(section);
             }
-
-            sb.AppendLine(line);
-            sb.AppendLine("  END OF REPORT");
-            sb.AppendLine(line);
 
             return sb.ToString();
         }
 
+    
         private static string GetReportVerdictText(string grade) => grade switch
         {
             "MALICIOUS" => "Malicious behaviour confirmed.",
@@ -811,7 +921,7 @@ namespace cyber_behaviour_profiling_2.Pages
             return "Unusual activity pattern detected";
         }
 
-        private static bool IsNoisyDeletedFile(string path)
+        private static bool IsNoisyDeletedFile(string path)//review later
         {
             string lower = path.ToLowerInvariant();
             if (lower.Contains("\\customdestinations\\") || lower.Contains("\\recent\\"))
@@ -849,7 +959,7 @@ namespace cyber_behaviour_profiling_2.Pages
             _ => new(Colors.Gray)
         };
 
-        private static string ShortenPath(string path)
+        private static string ShortenPath(string path) // add a button to expand full path in details view
         {
             if (string.IsNullOrEmpty(path)) return path;
 

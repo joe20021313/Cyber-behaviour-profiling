@@ -33,7 +33,6 @@ static class ProfileFactory
     public static void AddEvent(ProcessProfile p, string eventType, string indicator,
         string rawData, string category)
     {
-        var (tactic, techId, techName) = AttackNarrator.ResolveCategory(category);
         p.EventTimeline.Add(new SuspiciousEvent
         {
             Timestamp        = DateTime.Now,
@@ -41,9 +40,7 @@ static class ProfileFactory
             EventType        = eventType,
             MatchedIndicator = indicator,
             RawData          = rawData,
-            Tactic           = tactic,
-            TechniqueId      = techId,
-            TechniqueName    = techName,
+            Category         = category,
             AttemptCount     = 1
         });
     }
@@ -115,58 +112,57 @@ public class CategoryMappingTests
 public class ToGradeTests
 {
     static ToGradeTests() => TestSetup.Init();
-    private static ChainConfirmationResult NoChain() => new();
-    private static ChainConfirmationResult HardIndicator() =>
-        new() { HasHardIndicator = true };
-    private static ChainConfirmationResult ConfirmedChain() =>
-        new() { HasConfirmedChain = true, HasHardIndicator = true };
+
+    // ── New ThreatImpact-based tests ──
+
+    [Fact]
+    public void Safe_Impact_ReturnsSafe()
+    {
+        Assert.Equal("SAFE", AttackNarrator.ToGrade(ThreatImpact.Safe));
+    }
+
+    [Fact]
+    public void Inconclusive_Impact_ReturnsInconclusive()
+    {
+        Assert.Equal("INCONCLUSIVE", AttackNarrator.ToGrade(ThreatImpact.Inconclusive));
+    }
+
+    [Fact]
+    public void Suspicious_Impact_ReturnsSuspicious()
+    {
+        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(ThreatImpact.Suspicious));
+    }
+
+    [Fact]
+    public void Malicious_Impact_ReturnsMalicious()
+    {
+        Assert.Equal("MALICIOUS", AttackNarrator.ToGrade(ThreatImpact.Malicious));
+    }
+
+    // ── Legacy int-based tests (backward compat) ──
 
     [Fact]
     public void ZeroScore_ReturnsSafe()
     {
-        Assert.Equal("SAFE", AttackNarrator.ToGrade(0, NoChain()));
+        Assert.Equal("SAFE", AttackNarrator.ToGrade(0));
     }
 
     [Fact]
-    public void LowScore_ReturnsSafe()
+    public void LowScore_ReturnsInconclusive()
     {
-        Assert.Equal("SAFE", AttackNarrator.ToGrade(5, NoChain()));
+        Assert.Equal("INCONCLUSIVE", AttackNarrator.ToGrade(20));
     }
 
     [Fact]
-    public void HighScoreWithChain_ReturnsMalicious()
+    public void HighScore_ReturnsSuspicious()
     {
-        Assert.Equal("MALICIOUS", AttackNarrator.ToGrade(200, ConfirmedChain()));
+        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(50));
     }
 
     [Fact]
-    public void HighScoreNoChain_ReturnsSuspicious()
+    public void CriticalScore_ReturnsMalicious()
     {
-        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(200, NoChain()));
-    }
-
-    [Fact]
-    public void ReviewScoreWithHardIndicator_ReturnsSuspicious()
-    {
-        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(60, HardIndicator()));
-    }
-
-    [Fact]
-    public void ReviewScoreNoSignals_ReturnsInconclusive()
-    {
-        Assert.Equal("INCONCLUSIVE", AttackNarrator.ToGrade(60, NoChain(), firedChecks: 0, observedTacticCount: 0));
-    }
-
-    [Fact]
-    public void ReviewScoreWithTactics_ReturnsSuspicious()
-    {
-        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(60, NoChain(), firedChecks: 0, observedTacticCount: 2));
-    }
-
-    [Fact]
-    public void ReviewScoreWithManyChecks_ReturnsSuspicious()
-    {
-        Assert.Equal("SUSPICIOUS", AttackNarrator.ToGrade(60, NoChain(), firedChecks: 4, observedTacticCount: 0));
+        Assert.Equal("MALICIOUS", AttackNarrator.ToGrade(100));
     }
 }
 
@@ -181,8 +177,9 @@ public class NarrativeTests
 
     private static BehaviorReport MaliciousReport() => new()
     {
-        FinalScore = 200, FiredChecks = 5, ObservedTacticCount = 3,
-        ChainResult = new ChainConfirmationResult { HasConfirmedChain = true, HasHardIndicator = true }
+        FinalVerdict = ThreatImpact.Malicious,
+        FinalScore = 90, FiredChecks = 5, ObservedTacticCount = 3,
+        ChainResult = new ChainConfirmationResult { HasHardIndicator = true }
     };
 
     [Fact]
@@ -287,12 +284,12 @@ public class ProcessProfileTests
     }
 
     [Fact]
-    public void SuspiciousEvent_TacticResolvedCorrectly()
+    public void SuspiciousEvent_CategoryStoredCorrectly()
     {
         var p = ProfileFactory.WithEvent("FileRead", "login data", "path", "credential_file_access");
         var ev = Assert.Single(p.EventTimeline);
-        Assert.Equal("CredentialAccess", ev.Tactic);
-        Assert.Equal("T1555", ev.TechniqueId);
+        Assert.Equal("credential_file_access", ev.Category);
+        Assert.Equal("", ev.Tactic);
     }
 }
 
