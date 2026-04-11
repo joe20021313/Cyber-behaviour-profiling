@@ -4,7 +4,6 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Security.Cryptography.X509Certificates;
 
 namespace Cyber_behaviour_profiling
 {
@@ -15,6 +14,7 @@ namespace Cyber_behaviour_profiling
     {
         public string Description { get; set; } = "";
         public string ArtifactPath { get; set; } = "";
+        public string CorrelationKey { get; set; } = "";
         public FindingSeverity Severity { get; set; } = FindingSeverity.Info;
         public List<InvestigationFinding> Children { get; set; } = new();
     }
@@ -199,27 +199,31 @@ namespace Cyber_behaviour_profiling
 
                 string ext  = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 string name = Path.GetFileName(file.FullPath).ToLowerInvariant();
+                bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
 
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
                     bool isMalwareArtifact = MapToData._malwareArtifacts.Contains(name);
                     bool inSensitiveDir = sensitiveDirs?.Any(d =>
                         file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true;
 
                     var finding = new InvestigationFinding
                     {
-                        Description = $"New executable dropped: {file.FullPath} " +
-                                      $"(size: {file.Size:N0} bytes, trust: {signature.ShortLabel})",
+                        Description = BuildNewArtifactDescription(file.FullPath, file.Size, supportsEmbeddedSignature),
                         ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
                     };
 
                     InvestigationLog.Write($"  [ALERT] New executable: {file.FullPath}");
-                    InvestigationLog.Write($"          Size={file.Size}, Trust={signature.ShortLabel}, " +
-                                           $"MalwareArtifact={isMalwareArtifact}, SensitiveDir={inSensitiveDir}");
+                    InvestigationLog.Write($"          Size={file.Size}, MalwareArtifact={isMalwareArtifact}, SensitiveDir={inSensitiveDir}");
 
-                    AppendSignatureContext(finding, signature, elevateTrustFailures: false);
+                    if (supportsEmbeddedSignature)
+                    {
+                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                        finding.Description = BuildNewArtifactDescription(file.FullPath, file.Size, supportsEmbeddedSignature, signature.ShortLabel);
+                        InvestigationLog.Write($"          Trust={signature.ShortLabel}");
+                        AppendSignatureContext(finding, signature, elevateTrustFailures: false);
+                    }
 
                     if (isMalwareArtifact)
                     {
@@ -271,17 +275,25 @@ namespace Cyber_behaviour_profiling
                 string ext = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                    InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath} (trust={signature.ShortLabel})");
+                    bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
+                    InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath}");
 
                     var finding = new InvestigationFinding
                     {
-                        Description = $"Executable modified during monitoring: {file.FullPath} (trust: {signature.ShortLabel})",
+                        Description = supportsEmbeddedSignature
+                            ? $"Binary modified during monitoring: {file.FullPath}"
+                            : $"Script modified during monitoring: {file.FullPath}",
                         ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Warning
                     };
 
-                    AppendSignatureContext(finding, signature, elevateTrustFailures: true);
+                    if (supportsEmbeddedSignature)
+                    {
+                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                        InvestigationLog.Write($"          Trust={signature.ShortLabel}");
+                        finding.Description += $" (trust: {signature.ShortLabel})";
+                        AppendSignatureContext(finding, signature, elevateTrustFailures: true);
+                    }
 
                     result.Findings.Add(finding);
                 }
@@ -296,7 +308,9 @@ namespace Cyber_behaviour_profiling
                     InvestigationLog.Write($"  [WARNING] Executable deleted: {path}");
                     result.Findings.Add(new InvestigationFinding
                     {
-                        Description = $"Executable deleted (cleanup?): {path}",
+                        Description = SignatureVerifier.SupportsEmbeddedSignature(path)
+                            ? $"Binary deleted during monitoring: {path}"
+                            : $"Script deleted during monitoring: {path}",
                         ArtifactPath = path,
                         Severity = FindingSeverity.Warning
                     });
@@ -344,6 +358,7 @@ namespace Cyber_behaviour_profiling
             var newFilesNearNetwork = diff.NewFiles
                 .Where(f => Math.Abs((f.LastWriteUtc - networkTime.ToUniversalTime()).TotalSeconds) < 10)
                 .ToList();
+            var informationalFiles = new List<FileSnapshot>();
 
             if (newFilesNearNetwork.Count > 0)
                 InvestigationLog.Write($"  Found {newFilesNearNetwork.Count} new files within ±10s of network event");
@@ -354,21 +369,30 @@ namespace Cyber_behaviour_profiling
 
                 string ext  = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 string name = Path.GetFileName(file.FullPath).ToLowerInvariant();
+                bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
 
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                    InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (trust={signature.ShortLabel})");
-
                     var finding = new InvestigationFinding
                     {
-                        Description = $"Executable appeared after connecting to {destination}: " +
-                                      $"{file.FullPath} (trust: {signature.ShortLabel})",
+                        Description = supportsEmbeddedSignature
+                            ? $"Binary appeared after connecting to {destination}: {file.FullPath}"
+                            : $"Script appeared after connecting to {destination}: {file.FullPath}",
                         ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
                     };
 
-                    AppendSignatureContext(finding, signature, elevateTrustFailures: false);
+                    if (supportsEmbeddedSignature)
+                    {
+                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                        InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (trust={signature.ShortLabel})");
+                        finding.Description += $" (trust: {signature.ShortLabel})";
+                        AppendSignatureContext(finding, signature, elevateTrustFailures: false);
+                    }
+                    else
+                    {
+                        InvestigationLog.Write($"  [ALERT] Script appeared after network event: {file.FullPath}");
+                    }
 
                     if (MapToData._malwareArtifacts.Contains(name))
                     {
@@ -384,14 +408,41 @@ namespace Cyber_behaviour_profiling
                 else
                 {
                     InvestigationLog.Write($"  [INFO] New file near network event: {file.FullPath}");
-                    result.Findings.Add(new InvestigationFinding
-                    {
-                        Description = $"New file appeared after connecting to {destination}: " +
-                                      $"{Path.GetFileName(file.FullPath)} ({file.Size:N0} bytes)",
-                        ArtifactPath = file.FullPath,
-                        Severity = FindingSeverity.Info
-                    });
+                    informationalFiles.Add(file);
                 }
+            }
+
+            if (informationalFiles.Count == 1)
+            {
+                var file = informationalFiles[0];
+                result.Findings.Add(new InvestigationFinding
+                {
+                    Description = $"File appeared after connecting to {destination}: {Path.GetFileName(file.FullPath)} ({file.Size:N0} bytes)",
+                    ArtifactPath = file.FullPath,
+                    Severity = FindingSeverity.Info
+                });
+            }
+            else if (informationalFiles.Count > 1)
+            {
+                string[] sampleNames = informationalFiles
+                    .Select(f => Path.GetFileName(f.FullPath))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(3)
+                    .ToArray();
+                int distinctCount = informationalFiles
+                    .Select(f => Path.GetFileName(f.FullPath))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                string remainderText = distinctCount > sampleNames.Length
+                    ? $", +{distinctCount - sampleNames.Length} more"
+                    : "";
+
+                result.Findings.Add(new InvestigationFinding
+                {
+                    Description = $"{informationalFiles.Count} files appeared within 10s of connecting to {destination}; samples: {string.Join(", ", sampleNames)}{remainderText}",
+                    CorrelationKey = $"network-summary::{NormalizeCorrelationKey(destination)}",
+                    Severity = FindingSeverity.Info
+                });
             }
 
             var downloadDirs = GetDownloadDirectories();
@@ -493,6 +544,20 @@ namespace Cyber_behaviour_profiling
         public static SignatureVerificationResult GetFileSignatureInfo(string filePath) =>
             SignatureVerifier.VerifyFile(filePath);
 
+        private static string BuildNewArtifactDescription(
+            string filePath,
+            long size,
+            bool supportsEmbeddedSignature,
+            string trustLabel = "")
+        {
+            string kind = supportsEmbeddedSignature ? "binary" : "script";
+            string suffix = string.IsNullOrWhiteSpace(trustLabel)
+                ? $"(size: {size:N0} bytes)"
+                : $"(size: {size:N0} bytes, trust: {trustLabel})";
+
+            return $"New {kind} dropped: {filePath} {suffix}";
+        }
+
         private static void AppendSignatureContext(
             InvestigationFinding finding,
             SignatureVerificationResult signature,
@@ -521,6 +586,18 @@ namespace Cyber_behaviour_profiling
                         finding.Severity = FindingSeverity.Alert;
                     break;
             }
+        }
+
+        private static string NormalizeCorrelationKey(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "unknown";
+
+            string trimmed = value.Trim();
+            int detailIndex = trimmed.IndexOf(" (", StringComparison.Ordinal);
+            return detailIndex > 0 && trimmed.EndsWith(')')
+                ? trimmed[..detailIndex].ToLowerInvariant()
+                : trimmed.ToLowerInvariant();
         }
 
         private static bool IsNoise(string path)

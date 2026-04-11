@@ -49,6 +49,11 @@ namespace Cyber_behaviour_profiling
     [SupportedOSPlatform("windows")]
     public static class SignatureVerifier
     {
+        private static readonly HashSet<string> EmbeddedSignatureExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".exe", ".dll", ".sys", ".ocx", ".scr", ".cpl", ".drv", ".efi"
+        };
+
         private const uint ErrorSuccess = 0;
         private const uint WtdRevokeWholeChain = 0x00000001;
         private const uint TrustENoSignature = 0x800B0100;
@@ -98,6 +103,14 @@ namespace Cyber_behaviour_profiling
             var previous = TestOverride;
             TestOverride = overrideFunc;
             return new TestOverrideScope(() => TestOverride = previous);
+        }
+
+        internal static bool SupportsEmbeddedSignature(string? filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            return EmbeddedSignatureExtensions.Contains(Path.GetExtension(filePath));
         }
 
         public static SignatureVerificationResult VerifyFile(string? filePath)

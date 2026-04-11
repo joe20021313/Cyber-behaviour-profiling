@@ -143,6 +143,90 @@ public class SystemDiscoveryTests
     }
 
     [Fact]
+    public void InvestigateNetworkEvent_GroupsManyNonExecutableArtifactsIntoOneFinding()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"systemdiscovery-network-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var before = SystemDiscovery.TakeDirectorySnapshot(new[] { root });
+            string[] files =
+            {
+                Path.Combine(root, "financial_record_0.pdf.locked"),
+                Path.Combine(root, "financial_record_1.pdf.locked"),
+                Path.Combine(root, "chunk_0.bin"),
+                Path.Combine(root, "loot.zip")
+            };
+
+            foreach (string file in files)
+                File.WriteAllText(file, "demo");
+
+            var after = SystemDiscovery.TakeDirectorySnapshot(new[] { root });
+            DateTime observedAt = DateTime.Now;
+            var networkEvent = ProfileFactory.Event(
+                "NetworkConnect",
+                "api.telegram.org",
+                "api.telegram.org",
+                "network_c2",
+                timestamp: observedAt,
+                lastSeen: observedAt);
+
+            var result = SystemDiscovery.InvestigateNetworkEvent(
+                networkEvent,
+                ProfileFactory.Empty("testapp.exe", 2_000_002_100),
+                before,
+                after);
+
+            Assert.Single(result.Findings);
+            Assert.Contains("4 files appeared within 10s of connecting to api.telegram.org", result.Findings[0].Description, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void InvestigateDirectoryChanges_ScriptArtifacts_DoNotReportBinaryTrustFailures()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            string root = Path.Combine(Path.GetTempPath(), $"systemdiscovery-script-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+
+            try
+            {
+                var before = SystemDiscovery.TakeDirectorySnapshot(new[] { root });
+                string scriptPath = Path.Combine(root, "stage.ps1");
+                File.WriteAllText(scriptPath, "Write-Host demo");
+                var after = SystemDiscovery.TakeDirectorySnapshot(new[] { root });
+
+                SignatureTestScope.WithSignatureResult(new SignatureVerificationResult
+                {
+                    HasSignature = true,
+                    IsCryptographicallyValid = false,
+                    IsTrustedPublisher = false,
+                    TrustState = SignatureTrustState.InvalidSignature,
+                    Summary = "A digital signature is present, but trust validation failed."
+                }, () =>
+                {
+                    var result = SystemDiscovery.InvestigateDirectoryChanges(before, after);
+
+                    var finding = Assert.Single(result.Findings,
+                        f => f.ArtifactPath.Equals(scriptPath, StringComparison.OrdinalIgnoreCase));
+                    Assert.DoesNotContain("trust:", finding.Description, StringComparison.OrdinalIgnoreCase);
+                    Assert.Empty(finding.Children);
+                });
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }, loadData: true);
+    }
+
+    [Fact]
     public void CommandLineMatchesRule_NormalizesExecutableSuffix()
     {
         Assert.True(MapToData.CommandLineMatchesRule(

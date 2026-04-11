@@ -209,7 +209,7 @@ public class AttackNarratorSmokeTests
             SignatureSummary = ""
         });
 
-        Assert.Equal("Signature information unavailable.", summary);
+        Assert.Equal("Signature status unavailable.", summary);
     }
 }
 
@@ -767,6 +767,30 @@ public class BehaviorAnalyzerVerdictTests
     }
 
     [Fact]
+    public void HighStartupActivity_DoesNotFireWhenUptimeIsUnavailable()
+    {
+        var profile = ProfileFactory.Empty("writer.exe", 2_000_000_650);
+        DateTime now = DateTime.Now;
+
+        for (int i = 0; i < 12; i++)
+        {
+            ProfileFactory.AddEvent(
+                profile,
+                "FileWrite",
+                $"file_{i}.txt",
+                $@"C:\Temp\file_{i}.txt",
+                "file_write",
+                timestamp: now,
+                lastSeen: now.AddMilliseconds(50));
+        }
+
+        var report = BehaviorAnalyzer.Analyze(profile);
+
+        Assert.DoesNotContain(report.FiredCheckNames,
+            name => name == "Immediate High Activity on Spawn");
+    }
+
+    [Fact]
     public void WriteAnomalyWithSensitiveAccess_ReturnsSuspicious()
     {
         var profile = BuildWriteAnomalyProfile("writer.exe", 2_000_000_608);
@@ -826,6 +850,40 @@ public class BehaviorAnalyzerVerdictTests
             Assert.Contains(report.FiredCheckNames,
                 name => name == "Hidden or Minimized Command Execution");
         }, loadData: true);
+    }
+
+    [Fact]
+    public void LaunchContextImagePath_IsUsedForSignatureResolution()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            TemporaryFileScope.WithExecutableFile(imagePath =>
+            {
+                string expectedSummary = "Trusted digital signature verified for publisher 'Microsoft Corporation'.";
+
+                SignatureTestScope.WithSignatureResult(new SignatureVerificationResult
+                {
+                    HasSignature = true,
+                    IsCryptographicallyValid = true,
+                    IsTrustedPublisher = true,
+                    TrustState = SignatureTrustState.TrustedPublisherVerified,
+                    PublisherName = "Microsoft Corporation",
+                    Summary = expectedSummary
+                }, () =>
+                {
+                    var profile = ProfileFactory.Empty(Path.GetFileName(imagePath), 2_100_000_652);
+                    profile.SpawnedAt = DateTime.Now;
+                    profile.ParentProcessIdAtSpawn = 5000;
+                    profile.ParentProcessNameAtSpawn = "launcher.exe";
+                    profile.LaunchCommandLineAtSpawn = $"\"{imagePath}\" -demo";
+
+                    var report = BehaviorAnalyzer.Analyze(profile);
+
+                    Assert.Equal(expectedSummary, report.SignatureSummary);
+                    Assert.Equal(SignatureTrustState.TrustedPublisherVerified, report.SignatureTrustState);
+                });
+            });
+        });
     }
 
     [Fact]

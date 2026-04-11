@@ -824,7 +824,7 @@ namespace cyber_behaviour_profiling_2.Pages
 
                     if (!narrative.HasObservedTimeline)
                     {
-                        sb.AppendLine("> Direct ETW activity was not captured before this process exited, but launch or artifact context was preserved.");
+                        sb.AppendLine("> The process ended before ETW activity was captured, but launch or artifact context was retained.");
                         sb.AppendLine();
                     }
                 }
@@ -877,10 +877,10 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private static string GetReportVerdictText(string grade) => grade switch
         {
-            "MALICIOUS" => "Malicious behaviour confirmed.",
-            "SUSPICIOUS" => "Suspicious behaviour detected.",
-            "INCONCLUSIVE" => "Suspicious behaviour was observed, but the evidence was limited.",
-            _ => "No malicious behaviour was confirmed."
+            "MALICIOUS" => "Malicious activity observed.",
+            "SUSPICIOUS" => "Suspicious activity observed.",
+            "INCONCLUSIVE" => "Unusual activity observed, but the evidence is limited.",
+            _ => "No malicious activity observed."
         };
 
         private static bool HasRenderableNarrativeContext(AttackNarrative narrative)
@@ -944,17 +944,36 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private static IEnumerable<string> GetUniqueNetworkDestinations(IEnumerable<NarrativeStep> steps)
         {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var step in steps)
             {
                 string destination = step.Detail ?? step.Headline;
-                if (seen.Add(destination))
-                    yield return destination;
+                string key = NormalizeNetworkDestination(destination);
+                if (!seen.TryGetValue(key, out string? existing) ||
+                    (destination.Contains(" (", StringComparison.Ordinal) &&
+                     !existing.Contains(" (", StringComparison.Ordinal)))
+                {
+                    seen[key] = destination;
+                }
             }
+
+            foreach (var value in seen.Values)
+                yield return value;
         }
 
         private static string FormatObservedPath(string path)
             => $"- `{Path.GetFileName(path)}`  —  {path}";
+
+        private static string NormalizeNetworkDestination(string destination)
+        {
+            if (string.IsNullOrWhiteSpace(destination))
+                return string.Empty;
+
+            int detailIndex = destination.IndexOf(" (", StringComparison.Ordinal);
+            return detailIndex > 0 && destination.EndsWith(')')
+                ? destination[..detailIndex]
+                : destination;
+        }
 
         private static bool IsNoisyDeletedFile(string path)
         {

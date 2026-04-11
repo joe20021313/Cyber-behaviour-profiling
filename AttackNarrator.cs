@@ -91,7 +91,7 @@ namespace Cyber_behaviour_profiling
         public static string ResolveSignatureSummary(AttackNarrative? narrative)
         {
             if (narrative == null || string.IsNullOrWhiteSpace(narrative.SignatureSummary))
-                return "Signature information unavailable.";
+                return "Signature status unavailable.";
 
             return narrative.SignatureSummary;
         }

@@ -376,7 +376,7 @@ namespace Cyber_behaviour_profiling
             if ((chainResult.HasHardIndicator || hasBehavioralRedFlag) && highestImpact < ThreatImpact.Malicious)
             {
                 highestImpact = ThreatImpact.Malicious;
-                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Malicious)}] High-confidence malicious behaviour confirmed across multiple signals.");
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Malicious)}] Multiple high-confidence signals point to malicious activity.");
             }
 
             if (highestImpact == ThreatImpact.Inconclusive &&
@@ -400,10 +400,10 @@ namespace Cyber_behaviour_profiling
             };
             string verdictDetail = grade switch
             {
-                "MALICIOUS"    => "Malicious behaviour confirmed.",
-                "SUSPICIOUS"   => "Suspicious behaviour detected.",
-                "INCONCLUSIVE" => "Some unusual behaviour was observed but could not be conclusively confirmed.",
-                _              => "No significant threats detected."
+                "MALICIOUS"    => "Malicious activity observed.",
+                "SUSPICIOUS"   => "Suspicious activity observed.",
+                "INCONCLUSIVE" => "Unusual activity observed, but the evidence is limited.",
+                _              => "No malicious activity observed."
             };
             report.DecisionReasons.Insert(0, verdictDetail);
 
@@ -529,8 +529,12 @@ namespace Cyber_behaviour_profiling
 
                     foreach (var finding in r.Findings)
                     {
-                        if (!string.IsNullOrWhiteSpace(finding.ArtifactPath) &&
-                            !reportedFilePaths.Add(finding.ArtifactPath))
+                        string correlationKey = !string.IsNullOrWhiteSpace(finding.CorrelationKey)
+                            ? finding.CorrelationKey
+                            : finding.ArtifactPath;
+
+                        if (!string.IsNullOrWhiteSpace(correlationKey) &&
+                            !reportedFilePaths.Add(correlationKey))
                             continue;
 
                         combined.Findings.Add(finding);
@@ -1081,7 +1085,7 @@ namespace Cyber_behaviour_profiling
                 ctx.IsConsoleApp && ctx.ThreadCount <= 4,
                 ThreatImpact.Inconclusive, "Background process with no visible window");
 
-            bool immediatelyActive = ctx.UptimeSeconds < 2.0 && events.Count > 10;
+            bool immediatelyActive = ctx.UptimeSeconds > 0 && ctx.UptimeSeconds < 2.0 && events.Count > 10;
             yield return Check(SemanticCheckId.ImmediateHighActivityOnSpawn,
                 immediatelyActive,
                 ThreatImpact.Inconclusive, $"{events.Count} events in {ctx.UptimeSeconds:F1}s of startup");
@@ -1790,6 +1794,8 @@ namespace Cyber_behaviour_profiling
             {
                 etwImagePath = existingProfile.ImagePath;
             }
+            if (string.IsNullOrWhiteSpace(etwImagePath))
+                etwImagePath = ResolveStoredImagePath(profile);
 
             string storedParentName = profile.ParentProcessNameAtSpawn;
             string storedParentPath = profile.ParentImagePathAtSpawn;
@@ -1930,6 +1936,89 @@ namespace Cyber_behaviour_profiling
             }
             catch { }
             return ("", false);
+        }
+
+        private static string ResolveStoredImagePath(ProcessProfile profile)
+        {
+            if (profile == null)
+                return "";
+
+            if (!string.IsNullOrWhiteSpace(profile.ImagePath) && File.Exists(profile.ImagePath))
+                return profile.ImagePath;
+
+            string launchPath = ExtractExecutableFromCommandLine(profile.LaunchCommandLineAtSpawn);
+            string resolvedLaunchPath = ResolveExecutablePath(launchPath);
+            if (!string.IsNullOrWhiteSpace(resolvedLaunchPath))
+                return resolvedLaunchPath;
+
+            if (profile.SpawnedCommandLines != null)
+            {
+                foreach (var spawn in profile.SpawnedCommandLines)
+                {
+                    string resolvedSpawnPath = ResolveExecutablePath(spawn.ImagePath);
+                    if (!string.IsNullOrWhiteSpace(resolvedSpawnPath))
+                        return resolvedSpawnPath;
+                }
+            }
+
+            return ResolveExecutablePath(profile.ProcessName);
+        }
+
+        private static string ExtractExecutableFromCommandLine(string? commandLine)
+        {
+            if (string.IsNullOrWhiteSpace(commandLine))
+                return "";
+
+            string trimmed = commandLine.Trim();
+            if (trimmed.StartsWith('"'))
+            {
+                int closingQuote = trimmed.IndexOf('"', 1);
+                return closingQuote > 1 ? trimmed[1..closingQuote] : trimmed.Trim('"');
+            }
+
+            int firstSpace = trimmed.IndexOf(' ');
+            return firstSpace > 0 ? trimmed[..firstSpace] : trimmed;
+        }
+
+        private static string ResolveExecutablePath(string? rawExecutable)
+        {
+            if (string.IsNullOrWhiteSpace(rawExecutable))
+                return "";
+
+            string candidate = Environment.ExpandEnvironmentVariables(rawExecutable.Trim().Trim('"'));
+            if (File.Exists(candidate))
+                return candidate;
+
+            if (!Path.HasExtension(candidate) && File.Exists(candidate + ".exe"))
+                return candidate + ".exe";
+
+            var searchDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                Environment.SystemDirectory,
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SysWOW64"),
+                AppContext.BaseDirectory
+            };
+
+            string pathValue = Environment.GetEnvironmentVariable("PATH") ?? "";
+            foreach (string part in pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                searchDirs.Add(part.Trim());
+
+            foreach (string dir in searchDirs.Where(Directory.Exists))
+            {
+                string directCandidate = Path.Combine(dir, Path.GetFileName(candidate));
+                if (File.Exists(directCandidate))
+                    return directCandidate;
+
+                if (!Path.HasExtension(directCandidate))
+                {
+                    string exeCandidate = directCandidate + ".exe";
+                    if (File.Exists(exeCandidate))
+                        return exeCandidate;
+                }
+            }
+
+            return "";
         }
 
         private static List<string> BuildAncestorChain(ProcessProfile profile, int maxDepth = 5)
