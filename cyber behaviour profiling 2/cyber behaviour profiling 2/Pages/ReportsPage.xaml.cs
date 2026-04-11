@@ -35,8 +35,7 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             if (!Directory.Exists(ReportsDir))
             {
-                ReportsList.ItemsSource = null;
-                EmptyText.Visibility = Visibility.Visible;
+                SetEmptyState();
                 return;
             }
 
@@ -46,47 +45,63 @@ namespace cyber_behaviour_profiling_2.Pages
 
             if (files.Count == 0)
             {
-                ReportsList.ItemsSource = null;
-                EmptyText.Visibility = Visibility.Visible;
+                SetEmptyState();
                 return;
             }
 
             EmptyText.Visibility = Visibility.Collapsed;
 
-            var items = new List<ReportItemVM>();
-            foreach (var path in files)
+            ReportsList.ItemsSource = files.Select(CreateReportItem).ToList();
+        }
+
+        private void SetEmptyState()
+        {
+            ReportsList.ItemsSource = null;
+            EmptyText.Visibility = Visibility.Visible;
+        }
+
+        private static ReportItemVM CreateReportItem(string path)
+        {
+            var info = new FileInfo(path);
+            var summary = TryReadReportSummary(path);
+
+            return new ReportItemVM
             {
-                var info = new FileInfo(path);
-                string target = "";
-                string grade = "";
+                FileName = info.Name,
+                FilePath = path,
+                DateDisplay = info.CreationTime.ToString("yyyy-MM-dd HH:mm"),
+                Target = summary.Target,
+                Grade = summary.Grade,
+                GradeBrush = GradeToBrush(summary.Grade)
+            };
+        }
 
-                try
+        private static (string Target, string Grade) TryReadReportSummary(string path)
+        {
+            string target = "";
+            string grade = "";
+
+            try
+            {
+                using var reader = new StreamReader(path);
+                for (int i = 0; i < 10; i++)
                 {
-                    using var reader = new StreamReader(path);
-                    for (int i = 0; i < 10; i++)
-                    {
-                        string? line = reader.ReadLine();
-                        if (line == null) break;
-                        if (line.TrimStart().StartsWith("Target:"))
-                            target = line.Split(':', 2)[1].Trim();
-                        else if (line.TrimStart().StartsWith("Grade:"))
-                            grade = line.Split(':', 2)[1].Trim();
-                    }
+                    string? line = reader.ReadLine();
+                    if (line == null)
+                        break;
+
+                    string trimmed = line.TrimStart();
+                    if (trimmed.StartsWith("Target:"))
+                        target = trimmed.Split(':', 2)[1].Trim();
+                    else if (trimmed.StartsWith("Grade:"))
+                        grade = trimmed.Split(':', 2)[1].Trim();
                 }
-                catch { }
-
-                items.Add(new ReportItemVM
-                {
-                    FileName = info.Name,
-                    FilePath = path,
-                    DateDisplay = info.CreationTime.ToString("yyyy-MM-dd HH:mm"),
-                    Target = target,
-                    Grade = grade,
-                    GradeBrush = GradeToBrush(grade)
-                });
+            }
+            catch
+            {
             }
 
-            ReportsList.ItemsSource = items;
+            return (target, grade);
         }
 
         private void ReportItem_Click(object sender, MouseButtonEventArgs e)
@@ -107,9 +122,20 @@ namespace cyber_behaviour_profiling_2.Pages
 
                 if (answer == MessageBoxResult.Yes)
                 {
-                    try { File.Delete(path); } catch { }
+                    TryDeleteReport(path);
                     LoadReports();
                 }
+            }
+        }
+
+        private static void TryDeleteReport(string path)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch
+            {
             }
         }
 

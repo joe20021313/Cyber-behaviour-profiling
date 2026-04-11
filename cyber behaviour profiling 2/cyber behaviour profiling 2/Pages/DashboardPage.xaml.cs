@@ -8,6 +8,5 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             InitializeComponent();
         }
-
     }
 }

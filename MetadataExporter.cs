@@ -2,6 +2,36 @@ using System.Text;
 
 public static class MetadataExporter
 {
+    private static readonly Dictionary<string, string> _eventLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["FileWrite"]                  = "File Write",
+        ["FileRead"]                   = "File Read",
+        ["FileOpen"]                   = "File Open",
+        ["FileDelete"]                 = "File Delete",
+        ["FileRename"]                 = "File Rename",
+        ["SensitiveDirAccess"]         = "Sensitive Directory Access",
+        ["UncommonWrite"]              = "Uncommon File Write",
+        ["AccessibilityBinaryOverwrite"] = "Accessibility Binary Overwrite",
+        ["Executable Drop"]            = "Executable Drop",
+        ["Registry"]                   = "Registry",
+        ["NetworkConnect"]             = "Network Connection",
+        ["DNS_Query"]                  = "DNS Query",
+        ["ProcessSpawn"]               = "Process Spawn",
+        ["SuspiciousCommand"]          = "Suspicious Command",
+        ["DiscoverySpawn"]             = "Discovery Spawn",
+        ["DPAPI_Decrypt"]              = "DPAPI Decrypt",
+        ["LsassAccess"]                = "LSASS Access",
+        ["RemoteThreadInjection"]      = "Remote Thread Injection",
+        ["ProcessTampering"]           = "Process Tampering",
+        ["ContextSignal"]              = "Context Signal",
+    };
+
+    private static string FriendlyLabel(string? eventType) =>
+        eventType != null && _eventLabels.TryGetValue(eventType, out var label) ? label : (eventType ?? "Unknown");
+
+    private static string FormatTimelineCount(int count) =>
+        count == 1 ? "1 timeline event" : $"{count} timeline events";
+
     public static string Generate(List<ProcessProfile> profiles)
     {
         var sb = new StringBuilder();
@@ -9,12 +39,10 @@ public static class MetadataExporter
         string thin = new string('─', 80);
 
         sb.AppendLine(line);
-        sb.AppendLine("  PROGRAM LIFECYCLE METADATA");
         sb.AppendLine($"  Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine(line);
         sb.AppendLine();
         sb.AppendLine("  This file contains all raw telemetry collected during the monitoring session.");
-        sb.AppendLine("  Data is grouped by process, then by event type.");
         sb.AppendLine("  Tip: Use Ctrl+F to search for keywords (file paths, IPs, domains, etc.).");
         sb.AppendLine();
 
@@ -24,11 +52,7 @@ public static class MetadataExporter
         int sectionNum = 1;
         foreach (var p in profiles)
         {
-            int eventCount = p.EventTimeline.Count
-                + p.ExeDropPaths.Count
-                + p.DeletedPaths.Count
-                + p.SpawnedCommandLines.Count;
-            sb.AppendLine($"  [{sectionNum}] {p.ProcessName} (PID {p.ProcessId}) — {eventCount} events");
+            sb.AppendLine($"  [{sectionNum}] {p.ProcessName} (PID {p.ProcessId}) — {FormatTimelineCount(p.EventTimeline.Count)}");
             sectionNum++;
         }
         sb.AppendLine();
@@ -38,101 +62,73 @@ public static class MetadataExporter
         {
             sb.AppendLine(line);
             sb.AppendLine($"  [{sectionNum}] PROCESS: {p.ProcessName}");
-            sb.AppendLine($"      PID:        {p.ProcessId}");
-            sb.AppendLine($"      First seen: {p.FirstSeen:yyyy-MM-dd HH:mm:ss.fff}");
+            sb.AppendLine($"      PID:         {p.ProcessId}");
+            sb.AppendLine($"      First seen:  {p.FirstSeen:yyyy-MM-dd HH:mm:ss.fff}");
             sb.AppendLine($"      File writes: {p.TotalFileWrites}    File deletes: {p.TotalFileDeletes}");
             sb.AppendLine(line);
             sb.AppendLine();
 
             var events = p.EventTimeline.OrderBy(e => e.Timestamp).ToList();
+            bool anyContent = events.Count > 0;
 
-            var grouped = events
-                .GroupBy(e => e.EventType ?? "Unknown")
-                .OrderBy(g => g.Key);
-
-            bool anyContent = false;
-
-            foreach (var group in grouped)
+            if (anyContent)
             {
-                anyContent = true;
-                sb.AppendLine($"  ┌─ {group.Key} ({group.Count()} events)");
-                sb.AppendLine($"  │");
+                sb.AppendLine($"  ── EVENT LOG ({events.Count} entries) ──────────────────────────────────");
+                sb.AppendLine();
 
-                var collapsed = CollapseRepeats(group.ToList());
-
-                foreach (var entry in collapsed)
+                foreach (var e in events)
                 {
-                    string time = entry.Timestamp.ToString("HH:mm:ss.fff");
-                    string repeat = entry.AttemptCount > 1 ? $" (×{entry.AttemptCount})" : "";
-                    string lastSeen = entry.AttemptCount > 1 && entry.LastSeen > entry.Timestamp
-                        ? $"  last: {entry.LastSeen:HH:mm:ss.fff}"
-                        : "";
+                    string time  = e.Timestamp.ToString("HH:mm:ss.fff");
+                    string label = FriendlyLabel(e.EventType);
 
-                    sb.AppendLine($"  │  [{time}]{repeat}{lastSeen}");
+                    sb.AppendLine($"  [{time}]  {label}");
 
-                    if (!string.IsNullOrWhiteSpace(entry.Tactic))
-                        sb.AppendLine($"  │    Tactic:    {entry.Tactic}");
-                    if (!string.IsNullOrWhiteSpace(entry.TechniqueId))
-                        sb.AppendLine($"  │    Technique: {entry.TechniqueId} — {entry.TechniqueName}");
-                    if (!string.IsNullOrWhiteSpace(entry.MatchedIndicator))
-                        sb.AppendLine($"  │    Indicator: {entry.MatchedIndicator}");
-                    if (!string.IsNullOrWhiteSpace(entry.RawData))
-                        sb.AppendLine($"  │    Data:      {entry.RawData}");
-                    sb.AppendLine($"  │");
+                    if (!string.IsNullOrWhiteSpace(e.RawData))
+                        sb.AppendLine($"             Data:      {e.RawData}");
+                    if (!string.IsNullOrWhiteSpace(e.MatchedIndicator))
+                        sb.AppendLine($"             Indicator: {e.MatchedIndicator}");
                 }
 
-                sb.AppendLine($"  └─");
                 sb.AppendLine();
             }
 
-            var spawned = p.SpawnedCommandLines.ToList();
+            var spawned = p.SpawnedCommandLines.OrderBy(s => s.StartTime).ToList();
             if (spawned.Count > 0)
             {
                 anyContent = true;
-                sb.AppendLine($"  ┌─ Spawned Processes ({spawned.Count} total)");
-                sb.AppendLine($"  │");
-
-                var spawnCollapsed = spawned
-                    .GroupBy(s => $"{s.Name}|{s.CommandLine}", StringComparer.OrdinalIgnoreCase)
-                    .Select(g => (g.First().Name, g.First().CommandLine, Count: g.Count()))
-                    .OrderBy(s => s.Name);
-
-                foreach (var (child, cmd, count) in spawnCollapsed)
+                sb.AppendLine($"  ── SPAWNED PROCESSES ({spawned.Count} total) ──────────────────────────");
+                sb.AppendLine();
+                foreach (var s in spawned)
                 {
-                    string repeat = count > 1 ? $" (×{count})" : "";
-                    sb.AppendLine($"  │  {child}{repeat}");
-                    if (!string.IsNullOrWhiteSpace(cmd))
-                        sb.AppendLine($"  │    Command: {cmd}");
-                    sb.AppendLine($"  │");
+                    string time = s.StartTime != default ? s.StartTime.ToString("HH:mm:ss.fff") : "??:??:??.???";
+                    sb.AppendLine($"  [{time}]  Process Spawn  →  {s.Name}  (PID {s.Pid})");
+                    if (!string.IsNullOrWhiteSpace(s.ImagePath))
+                        sb.AppendLine($"             Path:    {s.ImagePath}");
+                    if (!string.IsNullOrWhiteSpace(s.CommandLine))
+                        sb.AppendLine($"             Command: {s.CommandLine}");
                 }
-
-                sb.AppendLine($"  └─");
                 sb.AppendLine();
             }
 
-            var dropped = p.ExeDropPaths.Keys.ToList();
+            var dropped = p.ExeDropPaths.Keys.OrderBy(x => x).ToList();
             if (dropped.Count > 0)
             {
                 anyContent = true;
-                sb.AppendLine($"  ┌─ Dropped Executables ({dropped.Count} total)");
-                sb.AppendLine($"  │");
+                sb.AppendLine($"  ── DROPPED EXECUTABLES ({dropped.Count} total) ──────────────────────");
+                sb.AppendLine();
                 foreach (var path in dropped)
-                    sb.AppendLine($"  │  {path}");
-                sb.AppendLine($"  │");
-                sb.AppendLine($"  └─");
+                    sb.AppendLine($"             {path}");
                 sb.AppendLine();
             }
 
-            var deleted = p.DeletedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var deleted = p.DeletedPaths.OrderBy(x => x).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (deleted.Count > 0)
             {
                 anyContent = true;
-                sb.AppendLine($"  ┌─ Deleted Files ({deleted.Count} total)");
-                sb.AppendLine($"  │");
+                sb.AppendLine($"  ── DELETED FILES ({deleted.Count} total) ───────────────────────────");
+                sb.AppendLine();
                 foreach (var path in deleted)
-                    sb.AppendLine($"  │  {path}");
-                sb.AppendLine($"  │");
-                sb.AppendLine($"  └─");
+                    sb.AppendLine($"             {path}");
                 sb.AppendLine();
             }
 
@@ -142,12 +138,10 @@ public static class MetadataExporter
             if (writeDirs.Count > 0)
             {
                 anyContent = true;
-                sb.AppendLine($"  ┌─ Write Directories ({writeDirs.Count} total, {p.TotalFileWrites} writes)");
-                sb.AppendLine($"  │");
+                sb.AppendLine($"  ── WRITTEN DIRECTORIES ({writeDirs.Count} dirs, {p.TotalFileWrites} total writes) ──");
+                sb.AppendLine();
                 foreach (var kvp in writeDirs)
-                    sb.AppendLine($"  │  {kvp.Key}  (×{kvp.Value})");
-                sb.AppendLine($"  │");
-                sb.AppendLine($"  └─");
+                    sb.AppendLine($"             {kvp.Key}  (×{kvp.Value})");
                 sb.AppendLine();
             }
 
@@ -165,42 +159,5 @@ public static class MetadataExporter
         sb.AppendLine(line);
 
         return sb.ToString();
-    }
-
-    private static List<SuspiciousEvent> CollapseRepeats(List<SuspiciousEvent> events)
-    {
-        var result = new List<SuspiciousEvent>();
-        var seen = new Dictionary<string, SuspiciousEvent>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var e in events)
-        {
-            string key = $"{e.Tactic}|{e.TechniqueId}|{e.RawData}";
-
-            if (seen.TryGetValue(key, out var existing))
-            {
-                existing.AttemptCount += e.AttemptCount;
-                if (e.Timestamp > existing.LastSeen)
-                    existing.LastSeen = e.Timestamp;
-            }
-            else
-            {
-                var clone = new SuspiciousEvent
-                {
-                    Timestamp        = e.Timestamp,
-                    LastSeen         = e.LastSeen > e.Timestamp ? e.LastSeen : e.Timestamp,
-                    Tactic           = e.Tactic,
-                    TechniqueId      = e.TechniqueId,
-                    TechniqueName    = e.TechniqueName,
-                    EventType        = e.EventType,
-                    MatchedIndicator = e.MatchedIndicator,
-                    RawData          = e.RawData,
-                    AttemptCount     = e.AttemptCount,
-                };
-                seen[key] = clone;
-                result.Add(clone);
-            }
-        }
-
-        return result;
     }
 }

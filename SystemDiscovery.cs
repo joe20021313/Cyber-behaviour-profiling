@@ -8,48 +8,47 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace Cyber_behaviour_profiling
 {
-
     public enum FindingSeverity { Info, Warning, Alert }
-    public enum SuspicionLevel  { None, Low, Medium, High }
+    public enum SuspicionLevel { None, Low, Medium, High }
 
     public sealed class InvestigationFinding
     {
-        public string           Description { get; set; } = "";
-        public FindingSeverity  Severity    { get; set; } = FindingSeverity.Info;
+        public string Description { get; set; } = "";
+        public FindingSeverity Severity { get; set; } = FindingSeverity.Info;
         public List<InvestigationFinding> Children { get; set; } = new();
     }
 
     public sealed class InvestigationResult
     {
-        public List<InvestigationFinding> Findings                { get; set; } = new();
-        public SuspicionLevel             OverallSuspicion        { get; set; } = SuspicionLevel.None;
-        public bool                       ShouldInvestigateFurther { get; set; } = false;
-        public int                        ScoreAdjustment         { get; set; } = 0;
+        public List<InvestigationFinding> Findings { get; set; } = new();
+        public SuspicionLevel OverallSuspicion { get; set; } = SuspicionLevel.None;
     }
 
     public sealed class FileSnapshot
     {
-        public string   FullPath      { get; set; } = "";
-        public DateTime LastWriteUtc  { get; set; }
-        public long     Size          { get; set; }
+        public string FullPath { get; set; } = "";
+        public DateTime LastWriteUtc { get; set; }
+        public long Size { get; set; }
     }
 
     public sealed class DirectorySnapshot
     {
-        public DateTime                         CapturedAtUtc { get; set; }
-        public Dictionary<string, FileSnapshot> Files         { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public DateTime CapturedAtUtc { get; set; }
+        public Dictionary<string, FileSnapshot> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     public sealed class SnapshotDiff
     {
-        public List<FileSnapshot> NewFiles      { get; set; } = new();
+        public List<FileSnapshot> NewFiles { get; set; } = new();
         public List<FileSnapshot> ModifiedFiles { get; set; } = new();
-        public List<string>       DeletedFiles  { get; set; } = new();
+        public List<string> DeletedFiles { get; set; } = new();
     }
 
     [SupportedOSPlatform("windows")]
     public static class SystemDiscovery
     {
+        private const int SnapshotDepthLimit = 4;
+
         public static DirectorySnapshot TakeDirectorySnapshot(IEnumerable<string> directories)
         {
             var snapshot = new DirectorySnapshot { CapturedAtUtc = DateTime.UtcNow };
@@ -61,7 +60,7 @@ namespace Cyber_behaviour_profiling
 
                 try
                 {
-                    foreach (string file in Directory.EnumerateFiles(dir, "*", SearchOption.TopDirectoryOnly))
+                    foreach (string file in EnumerateFilesWithinDepth(dir, SnapshotDepthLimit))
                     {
                         try
                         {
@@ -75,28 +74,6 @@ namespace Cyber_behaviour_profiling
                         }
                         catch { }
                     }
-
-                    foreach (string subDir in Directory.EnumerateDirectories(dir, "*", SearchOption.TopDirectoryOnly))
-                    {
-                        try
-                        {
-                            foreach (string file in Directory.EnumerateFiles(subDir, "*", SearchOption.TopDirectoryOnly))
-                            {
-                                try
-                                {
-                                    var info = new FileInfo(file);
-                                    snapshot.Files[file] = new FileSnapshot
-                                    {
-                                        FullPath     = file,
-                                        LastWriteUtc = info.LastWriteTimeUtc,
-                                        Size         = info.Length
-                                    };
-                                }
-                                catch { }
-                            }
-                        }
-                        catch { }
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -106,6 +83,76 @@ namespace Cyber_behaviour_profiling
 
             InvestigationLog.Write($"  Snapshot captured {snapshot.Files.Count} files");
             return snapshot;
+        }
+
+        public static List<string> ExpandSensitiveDirectoryCandidates(string rawDirectory)
+        {
+            var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(rawDirectory))
+                return candidates.ToList();
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string commonAppData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+            string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+            string normalized = rawDirectory.Replace('/', '\\').Trim();
+            string trimmed = normalized.Trim('\\');
+            string relative = trimmed.Replace('\\', Path.DirectorySeparatorChar);
+
+            void AddCandidate(string? candidate)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                    return;
+
+                string normalizedCandidate = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!string.IsNullOrWhiteSpace(normalizedCandidate))
+                    candidates.Add(normalizedCandidate);
+            }
+
+            if (Path.IsPathRooted(normalized))
+                AddCandidate(Environment.ExpandEnvironmentVariables(normalized));
+
+            if (trimmed.StartsWith(".ssh", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(userProfile, relative));
+
+            if (trimmed.Equals("appdata", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(userProfile, "AppData"));
+
+            if (trimmed.Equals("appdata\\local", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(localAppData);
+
+            if (trimmed.StartsWith("appdata\\local\\", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(localAppData,
+                    trimmed["appdata\\local\\".Length..].Replace('\\', Path.DirectorySeparatorChar)));
+
+            if (trimmed.Equals("appdata\\roaming", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.Equals("roaming", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(appData);
+
+            if (trimmed.StartsWith("appdata\\roaming\\", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(appData,
+                    trimmed["appdata\\roaming\\".Length..].Replace('\\', Path.DirectorySeparatorChar)));
+
+            if (trimmed.StartsWith("roaming\\", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(appData,
+                    trimmed["roaming\\".Length..].Replace('\\', Path.DirectorySeparatorChar)));
+
+            if (trimmed.StartsWith("drivers\\etc", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(windowsDir, "System32",
+                    trimmed.Replace('\\', Path.DirectorySeparatorChar)));
+
+            if (trimmed.StartsWith("appdata\\", StringComparison.OrdinalIgnoreCase))
+                AddCandidate(Path.Combine(userProfile, relative));
+
+            if (!string.IsNullOrWhiteSpace(commonAppData))
+                AddCandidate(Path.Combine(commonAppData, relative));
+
+            if (!string.IsNullOrWhiteSpace(windowsDir))
+                AddCandidate(Path.Combine(windowsDir, relative));
+
+            return candidates.ToList();
         }
 
         public static SnapshotDiff CompareSnapshots(DirectorySnapshot before, DirectorySnapshot after)
@@ -141,12 +188,9 @@ namespace Cyber_behaviour_profiling
             var result = new InvestigationResult();
             if (before == null || after == null) return result;
 
-
             var diff = CompareSnapshots(before, after);
 
-            InvestigationLog.Write($"  New files: {diff.NewFiles.Count}");
-            InvestigationLog.Write($"  Modified:  {diff.ModifiedFiles.Count}");
-            InvestigationLog.Write($"  Deleted:   {diff.DeletedFiles.Count}");
+           
 
             foreach (var file in diff.NewFiles)
             {
@@ -157,7 +201,7 @@ namespace Cyber_behaviour_profiling
 
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    bool isSigned = VerifyFileSignature(file.FullPath);
+                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
                     bool isMalwareArtifact = MapToData._malwareArtifacts.Contains(name);
                     bool inSensitiveDir = sensitiveDirs?.Any(d =>
                         file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true;
@@ -165,23 +209,15 @@ namespace Cyber_behaviour_profiling
                     var finding = new InvestigationFinding
                     {
                         Description = $"New executable dropped: {file.FullPath} " +
-                                      $"(size: {file.Size:N0} bytes, signed: {isSigned})",
+                                      $"(size: {file.Size:N0} bytes, trust: {signature.ShortLabel})",
                         Severity = FindingSeverity.Alert
                     };
 
                     InvestigationLog.Write($"  [ALERT] New executable: {file.FullPath}");
-                    InvestigationLog.Write($"          Size={file.Size}, Signed={isSigned}, " +
+                    InvestigationLog.Write($"          Size={file.Size}, Trust={signature.ShortLabel}, " +
                                            $"MalwareArtifact={isMalwareArtifact}, SensitiveDir={inSensitiveDir}");
 
-                    if (!isSigned)
-                    {
-                        finding.Children.Add(new InvestigationFinding
-                        {
-                            Description = "File is NOT digitally signed — elevated suspicion",
-                            Severity = FindingSeverity.Alert
-                        });
-                        result.ScoreAdjustment += 15;
-                    }
+                    AppendSignatureContext(finding, signature, elevateTrustFailures: false);
 
                     if (isMalwareArtifact)
                     {
@@ -190,7 +226,6 @@ namespace Cyber_behaviour_profiling
                             Description = $"Filename '{name}' matches a known malware tool",
                             Severity = FindingSeverity.Alert
                         });
-                        result.ScoreAdjustment += 20;
                     }
 
                     if (inSensitiveDir)
@@ -200,11 +235,7 @@ namespace Cyber_behaviour_profiling
                             Description = "Dropped into a sensitive/credential directory",
                             Severity = FindingSeverity.Alert
                         });
-                        result.ScoreAdjustment += 10;
                     }
-
-                    if (!isSigned)
-                        result.ShouldInvestigateFurther = true;
 
                     result.Findings.Add(finding);
                 }
@@ -216,7 +247,6 @@ namespace Cyber_behaviour_profiling
                         Description = $"Known malware artifact appeared: {file.FullPath}",
                         Severity = FindingSeverity.Alert
                     });
-                    result.ScoreAdjustment += 15;
                 }
                 else if (sensitiveDirs?.Any(d =>
                     file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true)
@@ -237,25 +267,16 @@ namespace Cyber_behaviour_profiling
                 string ext = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    bool isSigned = VerifyFileSignature(file.FullPath);
-                    InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath} (signed={isSigned})");
+                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                    InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath} (trust={signature.ShortLabel})");
 
                     var finding = new InvestigationFinding
                     {
-                        Description = $"Executable modified during monitoring: {file.FullPath} (signed: {isSigned})",
+                        Description = $"Executable modified during monitoring: {file.FullPath} (trust: {signature.ShortLabel})",
                         Severity = FindingSeverity.Warning
                     };
 
-                    if (!isSigned)
-                    {
-                        finding.Severity = FindingSeverity.Alert;
-                        result.ScoreAdjustment += 12;
-                        finding.Children.Add(new InvestigationFinding
-                        {
-                            Description = "Modified executable has no valid signature",
-                            Severity = FindingSeverity.Alert
-                        });
-                    }
+                    AppendSignatureContext(finding, signature, elevateTrustFailures: true);
 
                     result.Findings.Add(finding);
                 }
@@ -286,8 +307,7 @@ namespace Cyber_behaviour_profiling
 
             InvestigationLog.Write($"  Directory investigation complete: " +
                                    $"{alertCount} alerts, {warningCount} warnings, " +
-                                   $"suspicion={result.OverallSuspicion}, " +
-                                   $"scoreAdj={result.ScoreAdjustment}");
+                                   $"suspicion={result.OverallSuspicion}");
 
             return result;
         }
@@ -320,9 +340,7 @@ namespace Cyber_behaviour_profiling
                 .ToList();
 
             if (newFilesNearNetwork.Count > 0)
-            {
                 InvestigationLog.Write($"  Found {newFilesNearNetwork.Count} new files within ±10s of network event");
-            }
 
             foreach (var file in newFilesNearNetwork)
             {
@@ -333,29 +351,17 @@ namespace Cyber_behaviour_profiling
 
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    bool isSigned = VerifyFileSignature(file.FullPath);
-                    InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (signed={isSigned})");
+                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                    InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (trust={signature.ShortLabel})");
 
                     var finding = new InvestigationFinding
                     {
                         Description = $"Executable appeared after connecting to {destination}: " +
-                                      $"{file.FullPath} (signed: {isSigned})",
+                                      $"{file.FullPath} (trust: {signature.ShortLabel})",
                         Severity = FindingSeverity.Alert
                     };
 
-                    if (!isSigned)
-                    {
-                        finding.Children.Add(new InvestigationFinding
-                        {
-                            Description = "Downloaded executable is NOT signed — possible malware drop",
-                            Severity = FindingSeverity.Alert
-                        });
-                        result.ScoreAdjustment += 18;
-                    }
-                    else
-                    {
-                        result.ScoreAdjustment += 5;
-                    }
+                    AppendSignatureContext(finding, signature, elevateTrustFailures: false);
 
                     if (MapToData._malwareArtifacts.Contains(name))
                     {
@@ -364,10 +370,8 @@ namespace Cyber_behaviour_profiling
                             Description = $"Filename '{name}' matches known malware tool",
                             Severity = FindingSeverity.Alert
                         });
-                        result.ScoreAdjustment += 20;
                     }
 
-                    result.ShouldInvestigateFurther = true;
                     result.Findings.Add(finding);
                 }
                 else
@@ -420,7 +424,7 @@ namespace Cyber_behaviour_profiling
             }
 
             InvestigationLog.Write($"  Network investigation complete: " +
-                                   $"suspicion={result.OverallSuspicion}, scoreAdj={result.ScoreAdjustment}");
+                                   $"suspicion={result.OverallSuspicion}");
             return result;
         }
 
@@ -448,59 +452,65 @@ namespace Cyber_behaviour_profiling
 
         public static List<string> GetMonitoredDirectories(IReadOnlyList<string>? sensitiveDirs = null)
         {
-            var dirs = new List<string>(GetDownloadDirectories());
+            var dirs = new HashSet<string>(GetDownloadDirectories(), StringComparer.OrdinalIgnoreCase);
 
             if (sensitiveDirs != null)
             {
-                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
                 foreach (string sd in sensitiveDirs)
                 {
-                    string expanded = sd.Replace("\\", Path.DirectorySeparatorChar.ToString());
-
-                    string candidate1 = Path.Combine(localAppData, expanded.TrimStart(Path.DirectorySeparatorChar));
-                    string candidate2 = Path.Combine(appData, expanded.TrimStart(Path.DirectorySeparatorChar));
-
-                    if (Directory.Exists(candidate1)) dirs.Add(candidate1);
-                    else if (Directory.Exists(candidate2)) dirs.Add(candidate2);
+                    foreach (string candidate in ExpandSensitiveDirectoryCandidates(sd))
+                    {
+                        if (Directory.Exists(candidate))
+                            dirs.Add(candidate);
+                    }
                 }
             }
 
-            dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)));
-            dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)));
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (Directory.Exists(appData))
+                dirs.Add(appData);
+            if (Directory.Exists(localAppData))
+                dirs.Add(localAppData);
 
-            return dirs.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            return dirs.ToList();
         }
 
         public static bool VerifyFileSignature(string filePath)
         {
-            try
-            {
-                if (!File.Exists(filePath)) return false;
-#pragma warning disable SYSLIB0057
-                var cert = X509Certificate.CreateFromSignedFile(filePath);
-#pragma warning restore SYSLIB0057
-                if (cert == null) return false;
+            return GetFileSignatureInfo(filePath).IsTrustedPublisher;
+        }
 
-                using var cert2 = new X509Certificate2(cert);
-                string subject = cert2.Subject ?? "";
-                foreach (var part in subject.Split(','))
-                {
-                    string trimmed = part.Trim();
-                    if (trimmed.StartsWith("O=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string org = trimmed.Substring(2).Trim().Trim('"');
-                        if (!string.IsNullOrWhiteSpace(org)
-                            && MapToData._trustedPublishers.Contains(org))
-                            return true;
-                    }
-                }
-                return false;
-            }
-            catch
+        public static SignatureVerificationResult GetFileSignatureInfo(string filePath) =>
+            SignatureVerifier.VerifyFile(filePath);
+
+        private static void AppendSignatureContext(
+            InvestigationFinding finding,
+            SignatureVerificationResult signature,
+            bool elevateTrustFailures)
+        {
+            switch (signature.TrustState)
             {
-                return false;
+                case SignatureTrustState.TrustedPublisherVerified:
+                case SignatureTrustState.ValidSignatureUntrustedPublisher:
+                    finding.Children.Add(new InvestigationFinding
+                    {
+                        Description = signature.Summary,
+                        Severity = FindingSeverity.Info
+                    });
+                    break;
+
+                case SignatureTrustState.InvalidSignature:
+                case SignatureTrustState.Revoked:
+                case SignatureTrustState.RevocationCheckFailed:
+                    finding.Children.Add(new InvestigationFinding
+                    {
+                        Description = signature.Summary,
+                        Severity = FindingSeverity.Alert
+                    });
+                    if (elevateTrustFailures)
+                        finding.Severity = FindingSeverity.Alert;
+                    break;
             }
         }
 
@@ -523,6 +533,46 @@ namespace Cyber_behaviour_profiling
             catch { }
 
             return false;
+        }
+
+        private static IEnumerable<string> EnumerateFilesWithinDepth(string rootDirectory, int depthLimit)
+        {
+            var pendingDirectories = new Queue<(string DirectoryPath, int Depth)>();
+            pendingDirectories.Enqueue((rootDirectory, 0));
+
+            while (pendingDirectories.Count > 0)
+            {
+                var (currentDirectory, depth) = pendingDirectories.Dequeue();
+
+                IEnumerable<string> files;
+                try
+                {
+                    files = Directory.EnumerateFiles(currentDirectory, "*", SearchOption.TopDirectoryOnly);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string file in files)
+                    yield return file;
+
+                if (depth >= depthLimit)
+                    continue;
+
+                IEnumerable<string> subDirectories;
+                try
+                {
+                    subDirectories = Directory.EnumerateDirectories(currentDirectory, "*", SearchOption.TopDirectoryOnly);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (string subDirectory in subDirectories)
+                    pendingDirectories.Enqueue((subDirectory, depth + 1));
+            }
         }
     }
 }

@@ -1,11 +1,15 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Cyber_behaviour_profiling;
 
 namespace cyber_behaviour_profiling_2.Pages
 {
     public partial class SettingsPage : Page
     {
+        private static readonly SolidColorBrush EnabledBrush = new(Color.FromRgb(0x27, 0xAE, 0x60));
+        private static readonly SolidColorBrush DisabledBrush = new(Color.FromRgb(0xE7, 0x4C, 0x3C));
+
         public SettingsPage()
         {
             InitializeComponent();
@@ -44,9 +48,7 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             bool enabled = LiveMonitoringSession.IsScriptBlockLoggingEnabled();
             LoggingStatusText.Text = enabled ? "Status: Enabled" : "Status: Disabled";
-            LoggingStatusText.Foreground = enabled
-                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x27, 0xAE, 0x60))
-                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xE7, 0x4C, 0x3C));
+            LoggingStatusText.Foreground = enabled ? EnabledBrush : DisabledBrush;
         }
     }
 }

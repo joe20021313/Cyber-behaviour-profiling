@@ -1,0 +1,173 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="1b1926ba-a043-4e1c-b469-f1f158bae924" name="User@DESKTOP-N67JM2A 2026-04-05 01:25:05" runUser="DESKTOP-N67JM2A\User" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-04-05T01:25:05.8114372+01:00" queuing="2026-04-05T01:25:05.8114374+01:00" start="2026-04-05T01:25:05.3327972+01:00" finish="2026-04-05T01:25:05.8213646+01:00" />
+  <TestSettings name="default" id="6169eac2-0d6d-44ad-93d6-7c2bfaf87510">
+    <Deployment runDeploymentRoot="User_DESKTOP-N67JM2A_2026-04-05_01_25_05" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="b8509c17-87a5-49f0-bb2b-3ac1a4d81e04" testId="a7209ecc-0d42-5b35-d5e9-8f4f2c8fd34d" testName="DetectionLogicTests.AntiForensicCleanup_DetectsSuspiciousOrMalicious" computerName="DESKTOP-N67JM2A" duration="00:00:00.0259384" startTime="2026-04-05T01:25:05.7085136+01:00" endTime="2026-04-05T01:25:05.7422893+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b8509c17-87a5-49f0-bb2b-3ac1a4d81e04">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Contains() Failure: Filter not matched in collection&#xD;
+Collection: ["[VERDICT] dropper.exe (PID:1) → SAFE | Impact: Saf"···, "  [suppressed] Process Exited Before Analysis: Pro"···]</Message>
+          <StackTrace>   at DetectionLogicTests.AntiForensicCleanup_DetectsSuspiciousOrMalicious() in C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs:line 127&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="3f6b49b9-2c76-4dea-a0ad-ff4960e57385" testId="50dfea0f-bf6c-9595-32a0-d609b7e48568" testName="DetectionLogicTests.RansomwareActivity_DetectsHighSeverity" computerName="DESKTOP-N67JM2A" duration="00:00:00.0005291" startTime="2026-04-05T01:25:05.7470531+01:00" endTime="2026-04-05T01:25:05.7474362+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3f6b49b9-2c76-4dea-a0ad-ff4960e57385">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Equal() Failure: Values differ&#xD;
+Expected: Malicious&#xD;
+Actual:   Safe</Message>
+          <StackTrace>   at DetectionLogicTests.RansomwareActivity_DetectsHighSeverity() in C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs:line 108&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="fadd1c2a-7bbb-401c-8300-a98e13e5bb83" testId="295a5b6a-558d-a2e4-9dfe-58d5358d1375" testName="AnomalyDetectorTests.SpikeAfterBaseline_DetectsAnomaly" computerName="DESKTOP-N67JM2A" duration="00:00:00.0063641" startTime="2026-04-05T01:25:05.7252162+01:00" endTime="2026-04-05T01:25:05.7252649+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="fadd1c2a-7bbb-401c-8300-a98e13e5bb83" />
+    <UnitTestResult executionId="2e52e692-ff32-43f2-a4d0-d4ce339eda99" testId="6c948f4f-4367-a8ba-d027-a9dad3eabda3" testName="DetectionLogicTests.CleanProcess_ReturnsSafeVerdict" computerName="DESKTOP-N67JM2A" duration="00:00:00.0027805" startTime="2026-04-05T01:25:05.7458855+01:00" endTime="2026-04-05T01:25:05.7459304+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2e52e692-ff32-43f2-a4d0-d4ce339eda99">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.Contains() Failure: Filter not matched in collection&#xD;
+Collection: ["Parent process 'UNKNOWN' is not flagged as suspici"···, "Observed activity: 1 file operation(s) — none matc"···, "34 behavioral checks evaluated, 0 triggered.", "No checks fired — file operations, network behavio"···, "Absent threat indicators: no executable files drop"···, ···]</Message>
+          <StackTrace>   at DetectionLogicTests.CleanProcess_ReturnsSafeVerdict() in C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs:line 68&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="7ec2391b-1516-4373-9a20-4679beee0e7c" testId="c5447609-bcfd-b196-0d31-73695dd2e728" testName="AnomalyDetectorTests.SteadyBaseline_NoAnomaly" computerName="DESKTOP-N67JM2A" duration="00:00:00.0044826" startTime="2026-04-05T01:25:05.7076219+01:00" endTime="2026-04-05T01:25:05.7179236+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7ec2391b-1516-4373-9a20-4679beee0e7c" />
+    <UnitTestResult executionId="a150ea55-bf1f-42dc-b34c-2655d4f1b860" testId="3dc4207a-1c73-df6b-8316-912d9a456352" testName="DetectionLogicTests.SuspiciousProbes_ScoreIncreasesCorrectly" computerName="DESKTOP-N67JM2A" duration="00:00:00.0001923" startTime="2026-04-05T01:25:05.7477053+01:00" endTime="2026-04-05T01:25:05.7477378+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a150ea55-bf1f-42dc-b34c-2655d4f1b860">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure&#xD;
+Expected: True&#xD;
+Actual:   False</Message>
+          <StackTrace>   at DetectionLogicTests.SuspiciousProbes_ScoreIncreasesCorrectly() in C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs:line 144&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="6c72b920-12a7-44ac-b5a6-246b5e953a1c" testId="31afe222-06fb-135d-189b-659cef563b0e" testName="DetectionLogicTests.ExfiltrationChain_DetectsMalicious" computerName="DESKTOP-N67JM2A" duration="00:00:00.0018842" startTime="2026-04-05T01:25:05.7462338+01:00" endTime="2026-04-05T01:25:05.7468206+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6c72b920-12a7-44ac-b5a6-246b5e953a1c">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.True() Failure&#xD;
+Expected: True&#xD;
+Actual:   False</Message>
+          <StackTrace>   at DetectionLogicTests.ExfiltrationChain_DetectsMalicious() in C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs:line 89&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="AnomalyDetectorTests.SpikeAfterBaseline_DetectsAnomaly" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="295a5b6a-558d-a2e4-9dfe-58d5358d1375">
+      <Execution id="fadd1c2a-7bbb-401c-8300-a98e13e5bb83" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="AnomalyDetectorTests" name="SpikeAfterBaseline_DetectsAnomaly" />
+    </UnitTest>
+    <UnitTest name="DetectionLogicTests.RansomwareActivity_DetectsHighSeverity" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="50dfea0f-bf6c-9595-32a0-d609b7e48568">
+      <Execution id="3f6b49b9-2c76-4dea-a0ad-ff4960e57385" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="DetectionLogicTests" name="RansomwareActivity_DetectsHighSeverity" />
+    </UnitTest>
+    <UnitTest name="DetectionLogicTests.CleanProcess_ReturnsSafeVerdict" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="6c948f4f-4367-a8ba-d027-a9dad3eabda3">
+      <Execution id="2e52e692-ff32-43f2-a4d0-d4ce339eda99" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="DetectionLogicTests" name="CleanProcess_ReturnsSafeVerdict" />
+    </UnitTest>
+    <UnitTest name="DetectionLogicTests.ExfiltrationChain_DetectsMalicious" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="31afe222-06fb-135d-189b-659cef563b0e">
+      <Execution id="6c72b920-12a7-44ac-b5a6-246b5e953a1c" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="DetectionLogicTests" name="ExfiltrationChain_DetectsMalicious" />
+    </UnitTest>
+    <UnitTest name="AnomalyDetectorTests.SteadyBaseline_NoAnomaly" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="c5447609-bcfd-b196-0d31-73695dd2e728">
+      <Execution id="7ec2391b-1516-4373-9a20-4679beee0e7c" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="AnomalyDetectorTests" name="SteadyBaseline_NoAnomaly" />
+    </UnitTest>
+    <UnitTest name="DetectionLogicTests.SuspiciousProbes_ScoreIncreasesCorrectly" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="3dc4207a-1c73-df6b-8316-912d9a456352">
+      <Execution id="a150ea55-bf1f-42dc-b34c-2655d4f1b860" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="DetectionLogicTests" name="SuspiciousProbes_ScoreIncreasesCorrectly" />
+    </UnitTest>
+    <UnitTest name="DetectionLogicTests.AntiForensicCleanup_DetectsSuspiciousOrMalicious" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="a7209ecc-0d42-5b35-d5e9-8f4f2c8fd34d">
+      <Execution id="b8509c17-87a5-49f0-bb2b-3ac1a4d81e04" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="DetectionLogicTests" name="AntiForensicCleanup_DetectsSuspiciousOrMalicious" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="a7209ecc-0d42-5b35-d5e9-8f4f2c8fd34d" executionId="b8509c17-87a5-49f0-bb2b-3ac1a4d81e04" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="50dfea0f-bf6c-9595-32a0-d609b7e48568" executionId="3f6b49b9-2c76-4dea-a0ad-ff4960e57385" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="295a5b6a-558d-a2e4-9dfe-58d5358d1375" executionId="fadd1c2a-7bbb-401c-8300-a98e13e5bb83" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6c948f4f-4367-a8ba-d027-a9dad3eabda3" executionId="2e52e692-ff32-43f2-a4d0-d4ce339eda99" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c5447609-bcfd-b196-0d31-73695dd2e728" executionId="7ec2391b-1516-4373-9a20-4679beee0e7c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3dc4207a-1c73-df6b-8316-912d9a456352" executionId="a150ea55-bf1f-42dc-b34c-2655d4f1b860" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="31afe222-06fb-135d-189b-659cef563b0e" executionId="6c72b920-12a7-44ac-b5a6-246b5e953a1c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="7" executed="7" passed="2" failed="5" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.3)&#xD;
+[xUnit.net 00:00:00.04]   Discovering: CyberProfiler.Tests&#xD;
+[xUnit.net 00:00:00.07]   Discovered:  CyberProfiler.Tests&#xD;
+[xUnit.net 00:00:00.08]   Starting:    CyberProfiler.Tests&#xD;
+[xUnit.net 00:00:00.13]       Assert.Contains() Failure: Filter not matched in collection&#xD;
+[xUnit.net 00:00:00.13]       Collection: ["[VERDICT] dropper.exe (PID:1) → SAFE | Impact: Saf"···, "  [suppressed] Process Exited Before Analysis: Pro"···]&#xD;
+[xUnit.net 00:00:00.13]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.13]         C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs(127,0): at DetectionLogicTests.AntiForensicCleanup_DetectsSuspiciousOrMalicious()&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.13]       Assert.Contains() Failure: Filter not matched in collection&#xD;
+[xUnit.net 00:00:00.13]       Collection: ["Parent process 'UNKNOWN' is not flagged as suspici"···, "Observed activity: 1 file operation(s) — none matc"···, "34 behavioral checks evaluated, 0 triggered.", "No checks fired — file operations, network behavio"···, "Absent threat indicators: no executable files drop"···, ···]&#xD;
+[xUnit.net 00:00:00.13]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.13]         C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs(68,0): at DetectionLogicTests.CleanProcess_ReturnsSafeVerdict()&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.13]       Assert.True() Failure&#xD;
+[xUnit.net 00:00:00.13]       Expected: True&#xD;
+[xUnit.net 00:00:00.13]       Actual:   False&#xD;
+[xUnit.net 00:00:00.13]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.13]         C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs(89,0): at DetectionLogicTests.ExfiltrationChain_DetectsMalicious()&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.13]       Assert.Equal() Failure: Values differ&#xD;
+[xUnit.net 00:00:00.13]       Expected: Malicious&#xD;
+[xUnit.net 00:00:00.13]       Actual:   Safe&#xD;
+[xUnit.net 00:00:00.13]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.13]         C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs(108,0): at DetectionLogicTests.RansomwareActivity_DetectsHighSeverity()&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.13]       Assert.True() Failure&#xD;
+[xUnit.net 00:00:00.13]       Expected: True&#xD;
+[xUnit.net 00:00:00.13]       Actual:   False&#xD;
+[xUnit.net 00:00:00.13]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.13]         C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\BehaviorAnalyzerTests.cs(144,0): at DetectionLogicTests.SuspiciousProbes_ScoreIncreasesCorrectly()&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.13]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.14]   Finished:    CyberProfiler.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="DESKTOP-N67JM2A" outcome="Error" timestamp="2026-04-05T01:25:05.7441096+01:00">
+        <Text>[xUnit.net 00:00:00.13]     DetectionLogicTests.AntiForensicCleanup_DetectsSuspiciousOrMalicious [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-N67JM2A" outcome="Error" timestamp="2026-04-05T01:25:05.7460587+01:00">
+        <Text>[xUnit.net 00:00:00.13]     DetectionLogicTests.CleanProcess_ReturnsSafeVerdict [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-N67JM2A" outcome="Error" timestamp="2026-04-05T01:25:05.7469259+01:00">
+        <Text>[xUnit.net 00:00:00.13]     DetectionLogicTests.ExfiltrationChain_DetectsMalicious [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-N67JM2A" outcome="Error" timestamp="2026-04-05T01:25:05.7475458+01:00">
+        <Text>[xUnit.net 00:00:00.13]     DetectionLogicTests.RansomwareActivity_DetectsHighSeverity [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="DESKTOP-N67JM2A" outcome="Error" timestamp="2026-04-05T01:25:05.7478248+01:00">
+        <Text>[xUnit.net 00:00:00.13]     DetectionLogicTests.SuspiciousProbes_ScoreIncreasesCorrectly [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

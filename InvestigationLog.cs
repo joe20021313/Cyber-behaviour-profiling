@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace Cyber_behaviour_profiling
@@ -26,6 +28,42 @@ namespace Cyber_behaviour_profiling
             lock (_lock)
             {
                 _buffer.AppendLine(message);
+            }
+        }
+
+        public static void BeginSession(string sessionId, IEnumerable<string> targets, string dataFilePath,
+            bool powerShellLoggingEnabled)
+        {
+            string[] orderedTargets = targets?
+                .Where(target => !string.IsNullOrWhiteSpace(target))
+                .ToArray() ?? Array.Empty<string>();
+
+            lock (_lock)
+            {
+                _buffer.Clear();
+                _buffer.AppendLine($"Session: {sessionId}");
+                _buffer.AppendLine($"Started: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                _buffer.AppendLine($"Targets: {(orderedTargets.Length == 0 ? "none" : string.Join(", ", orderedTargets))}");
+                _buffer.AppendLine($"Rules file: {dataFilePath}");
+                _buffer.AppendLine($"PowerShell logging: {(powerShellLoggingEnabled ? "enabled" : "disabled")}");
+            }
+        }
+
+        public static void WriteStage(string stage, string message)
+        {
+            string normalizedStage = string.IsNullOrWhiteSpace(stage) ? "session" : stage.Trim();
+            Write($"[{DateTime.Now:HH:mm:ss}] [{normalizedStage}] {message}");
+        }
+
+        public static void EndSession(string overallGrade, int profileCount, int narrativeCount)
+        {
+            lock (_lock)
+            {
+                _buffer.AppendLine();
+                _buffer.AppendLine($"Completed: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                _buffer.AppendLine($"Overall grade: {overallGrade}");
+                _buffer.AppendLine($"Profiles analyzed: {profileCount}");
+                _buffer.AppendLine($"Narratives generated: {narrativeCount}");
             }
         }
 

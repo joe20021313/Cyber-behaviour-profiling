@@ -107,6 +107,7 @@
       "c:\\windows\\tracing\\"
     ],
     "context_signals": [
+      "\\appdata\\",
       "\\appdata\\local\\temp\\",
       "\\windows\\temp\\",
       "c:\\programdata\\",
@@ -132,6 +133,11 @@
     "benign_drop_prefixes": [
       "__psscriptpolicytest_",
       "__pssessionconfigurationtest_"
+    ],
+    "runtime_artifact_markers": [
+      "\\_mei",
+      "\\appdata\\local\\temp\\_mei",
+      "\\windows\\temp\\_mei"
     ],
     "noise_extensions": [
       ".log", ".etl", ".tmp", ".pf", ".db-journal", ".db-wal",
@@ -299,13 +305,13 @@
       { "pattern": "wbadmin delete catalog",   "description": "backup catalog deletion" },
       { "pattern": "bcdedit /set",             "description": "boot recovery modification" },
       { "pattern": "wmic shadowcopy delete",   "description": "shadow copy deletion via WMI" },
+      { "pattern": "wmic process call create", "description": "WMI-based process creation" },
       { "pattern": "schtasks /create",         "description": "scheduled task creation — persistence mechanism" },
       { "pattern": "schtasks /change",         "description": "scheduled task modification — persistence tampering" },
       { "pattern": "at \\\\",                   "description": "legacy remote task scheduling via at.exe" }
     ]
   },
   "process_trust": {
-    "description": "Score multiplier applied to any suspicious event caused by this process. Higher = less trusted = events are scored harder.",
     "trusted_publishers": [
       "Microsoft Corporation",
       "Microsoft Windows",
@@ -329,7 +335,6 @@
     ],
     "trusted_system": {
       "multiplier": 0.3,
-      "reason": "Core Windows OS processes. Unlikely to be attacker-controlled. Events from these are low priority.",
       "processes": [
         "explorer.exe",
         "svchost.exe",
@@ -348,7 +353,6 @@
     },
     "trusted_user_apps": {
       "multiplier": 0.8,
-      "reason": "Common legitimate user applications. Suspicious events are noteworthy but not alarming on their own.",
       "processes": [
         "chrome.exe",
         "msedge.exe",
@@ -382,7 +386,6 @@
     },
     "shell_interpreters": {
       "multiplier": 1.8,
-      "reason": "Command-line shells and script interpreters. Frequently abused by attackers. Any suspicious event from these is high priority.",
       "processes": [
         "powershell.exe",
         "pwsh.exe",
@@ -398,7 +401,6 @@
     },
     "lolbin_tools": {
       "multiplier": 2.5,
-      "reason": "Living-off-the-land binaries. Legitimate system tools that are commonly hijacked to run attacker code.",
       "processes": [
         "regsvr32.exe",
         "rundll32.exe",
@@ -414,32 +416,6 @@
         "wmic.exe",
         "msiexec.exe",
         "sdclt.exe"
-      ]
-    },
-    "blacklisted": {
-      "multiplier": 5.0,
-      "reason": "Known malware names or tools that have no legitimate use on an end-user machine. Any event is an immediate critical alert.",
-      "processes": [
-        "mimikatz.exe",
-        "pwdump.exe",
-        "procdump.exe",
-        "psexec.exe",
-        "psexesvc.exe",
-        "cobalt strike",
-        "meterpreter",
-        "nc.exe",
-        "ncat.exe",
-        "netcat.exe",
-        "sharphound.exe",
-        "bloodhound.exe",
-        "rubeus.exe",
-        "lazagne.exe",
-        "redline.exe",
-        "vidar.exe",
-        "lumma.exe",
-        "xmrig.exe",
-        "nbminer.exe",
-        "phoenixminer.exe"
       ]
     }
   },
@@ -459,17 +435,5 @@
     { "name": "qprocess.exe",   "description": "remote process discovery" },
     { "name": "query.exe",      "description": "remote session discovery" },
     { "name": "wmic.exe",       "description": "system information discovery" }
-  ],
-
-  "area_weights": {
-    "high_value": ["WindowsCredentialStore", "BrowserCredentials", "ThirdPartyCredentials", "DPAPIDecryption"],
-    "medium_value": ["DefenseTools"]
-  },
-  "scoring": {
-    "low_threshold": 15,
-    "medium_threshold": 35,
-    "review_threshold": 40,
-    "high_threshold": 60,
-    "critical_threshold": 85
-  }
+  ]
 }

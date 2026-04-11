@@ -40,12 +40,13 @@ namespace Cyber_behaviour_profiling
         public List<string> TargetProcesses { get; init; } = new();
         public string TargetProcess => string.Join(", ", TargetProcesses);
         public string OverallGrade { get; init; } = "SAFE";
+        public string DiagnosticTrace { get; init; } = "";
 
         public List<AttackNarrative> Narratives { get; init; } = new();
         public List<ProcessProfile> MergedProfiles { get; init; } = new();
     }
 
-    public  class LiveMonitoringSession : IDisposable
+    public class LiveMonitoringSession : IDisposable
     {
         private readonly object _sync = new();
         private readonly HashSet<uint> _monitoredPids = new();
@@ -69,7 +70,7 @@ namespace Cyber_behaviour_profiling
         public event Action<MonitoringEventUpdate>? EventObserved;
         public event Action<RawActivityUpdate>? ActivityObserved;
 
-        public bool IsRunning // prevents race conditions.
+        public bool IsRunning
         {
             get
             {
@@ -107,6 +108,14 @@ namespace Cyber_behaviour_profiling
                         _pidToTarget[pid] = name;
                     }
 
+                InvestigationLog.BeginSession(
+                    $"monitor-{DateTime.Now:yyyyMMdd-HHmmss}",
+                    _targetProcesses.OrderBy(t => t, StringComparer.OrdinalIgnoreCase),
+                    dataFilePath,
+                    enablePowerShellLogging);
+                InvestigationLog.WriteStage("session",
+                    $"Initial monitored PIDs: {(_monitoredPids.Count == 0 ? "none" : string.Join(", ", _monitoredPids.OrderBy(pid => pid)))}");
+
                 _powerShellLoggingEnabled = enablePowerShellLogging;
 
                 MapToData.ResetSession();
@@ -118,15 +127,20 @@ namespace Cyber_behaviour_profiling
                     var monitoredDirs = SystemDiscovery.GetMonitoredDirectories(
                         MapToData.SensitiveDirs as IReadOnlyList<string>);
                     _baselineSnapshot = SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
+                    InvestigationLog.WriteStage("session",
+                        $"Baseline snapshot captured: {_baselineSnapshot?.Files.Count ?? 0} files across {monitoredDirs.Count} monitored director{(monitoredDirs.Count == 1 ? "y" : "ies")}.");
                 }
-                catch (Exception ex)
+                catch
                 {
                     _baselineSnapshot = null;
+                    InvestigationLog.WriteStage("session", "Baseline snapshot unavailable.");
                 }
 
                 StartSysmonWatcher();
                 StartEtwSessions();
-                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000); // Timer takes a snapshot every 1 second to help with detection of file access patterns and other anomalies.
+                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000);
+                InvestigationLog.WriteStage("session",
+                    $"Monitoring active. Telemetry sources: Sysmon watcher, ETW user, ETW DNS, ETW kernel{(_powerShellLoggingEnabled ? ", ETW PowerShell" : string.Empty)}.");
                 _isRunning = true;
             }
         }
@@ -146,14 +160,12 @@ namespace Cyber_behaviour_profiling
             try { _snapshotTimer?.Dispose(); } catch { }
             _snapshotTimer = null;
 
-
-                if (_sysmonWatcher != null)
-                {
-                    _sysmonWatcher.Enabled = false;
-                    _sysmonWatcher.EventRecordWritten -= SysmonWatcher_EventRecordWritten;
-                    _sysmonWatcher.Dispose();
-                }
-            
+            if (_sysmonWatcher != null)
+            {
+                _sysmonWatcher.Enabled = false;
+                _sysmonWatcher.EventRecordWritten -= SysmonWatcher_EventRecordWritten;
+                _sysmonWatcher.Dispose();
+            }
 
             StopSession(_kernelSession, _kernelThread);
             StopSession(_userSession, _userThread);
@@ -228,15 +240,12 @@ namespace Cyber_behaviour_profiling
                 if (eventId == 3 && !string.IsNullOrEmpty(destinationHostname))
                     MapToData.EvaluateNetworkConnection(pid, image, destinationHostname);
 
-               
                 if (eventId == 10 && targetImage.Contains("lsass"))
                     MapToData.AddEventToProfile(pid, image, "LsassAccess", "lsass.exe", targetImage, "lsass_access", "Sysmon");
 
-                
                 if (eventId == 8 && !string.IsNullOrEmpty(targetImage))
                     MapToData.AddEventToProfile(pid, image, "RemoteThreadInjection", targetImage, targetImage, "process_injection", "Sysmon");
 
-               
                 if (eventId == 25)
                     MapToData.AddEventToProfile(pid, image, "ProcessTampering", image, image, "process_tampering", "Sysmon");
             }
@@ -391,7 +400,7 @@ namespace Cyber_behaviour_profiling
             _psSession.Source.Dynamic.All += data =>
             {
                 if (!IsRunning) return;
-                if ((int)data.ID != 4104) return; // ensures that we only get the commands that are actually executed, through powershell
+                if ((int)data.ID != 4104) return;
                 if (!ShouldMonitor(data.ProcessName, (uint)data.ProcessID)) return;
 
                 try
@@ -399,7 +408,7 @@ namespace Cyber_behaviour_profiling
                     string scriptText = "";
                     int idx = Array.IndexOf(data.PayloadNames, "ScriptBlockText");
                     if (idx >= 0)
-                        scriptText = data.PayloadValue(idx)?.ToString() ?? ""; // getting the actual script text that was executed, which is super useful for detection and also for the narrative later on. We truncate it to a reasonable length for display purposes, but the full text is still stored in the profile for analysis.
+                        scriptText = data.PayloadValue(idx)?.ToString() ?? "";
 
                     if (string.IsNullOrWhiteSpace(scriptText)) return;
 
@@ -448,7 +457,6 @@ namespace Cyber_behaviour_profiling
                 @"SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging", writable: true);
             if (key == null) return;
             key.DeleteValue("EnableScriptBlockLogging", throwOnMissingValue: false);
-            // Remove the key entirely if we left it empty
             var parent = Registry.LocalMachine.OpenSubKey(
                 @"SOFTWARE\Policies\Microsoft\Windows\PowerShell", writable: true);
             parent?.DeleteSubKeyTree("ScriptBlockLogging", throwOnMissingSubKey: false);
@@ -554,21 +562,22 @@ namespace Cyber_behaviour_profiling
             });
         }
 
-
-        private MonitoringSessionResult BuildResult() // this is where behaviour analysor is iniated
+        private MonitoringSessionResult BuildResult()
         {
-            var mergedProfiles = MapToData.GetMergedProfiles();
+            InvestigationLog.Section("Result Build");
+            var analysisProfiles = MapToData.GetAnalysisProfiles();
+            InvestigationLog.WriteStage("session",
+                $"Building final result from {analysisProfiles.Count} collected profile(s) for {string.Join(", ", _targetProcesses.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))}.");
 
-            // Ensure every target process appears in the report, even if no events were captured
             var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var p in mergedProfiles)
+            foreach (var p in analysisProfiles)
                 profileNames.Add(p.ProcessName?.ToLowerInvariant() ?? "");
 
             foreach (var target in _targetProcesses)
             {
                 if (!profileNames.Contains(target))
                 {
-                    mergedProfiles.Add(new ProcessProfile // creates blank profile
+                    analysisProfiles.Add(new ProcessProfile
                     {
                         ProcessId = 0,
                         ProcessName = target,
@@ -578,11 +587,15 @@ namespace Cyber_behaviour_profiling
             }
 
             var narratives = new List<AttackNarrative>();
-            foreach (var profile in mergedProfiles) // runs detection methodse
+            foreach (var profile in analysisProfiles)
             {
                 profile.DirectorySnapshotBefore = _baselineSnapshot;
+                InvestigationLog.WriteStage("session",
+                    $"Finalizing profile pid={profile.ProcessId} process='{profile.ProcessName}' events={profile.EventTimeline.Count}.");
                 var report = BehaviorAnalyzer.Analyze(profile);
                 var narrative = AttackNarrator.BuildNarrative(profile, report);
+                InvestigationLog.WriteStage("session",
+                    $"Narrative built pid={profile.ProcessId} process='{profile.ProcessName}' grade={narrative.Grade} steps={narrative.Timeline.Count} reasons={narrative.DecisionReasons.Count}.");
                 narratives.Add(narrative);
             }
 
@@ -594,14 +607,18 @@ namespace Cyber_behaviour_profiling
             });
 
             AttackNarrative top = narratives.Count > 0 ? narratives[0] : null;
+            string overallGrade = top?.Grade ?? "SAFE";
+            InvestigationLog.EndSession(overallGrade, analysisProfiles.Count, narratives.Count);
+            string diagnosticTrace = InvestigationLog.GetContents();
 
             return new MonitoringSessionResult
             {
                 TargetProcesses = _targetProcesses.ToList(),
-                OverallGrade = top?.Grade,
+                OverallGrade = overallGrade,
+                DiagnosticTrace = diagnosticTrace,
 
                 Narratives = narratives,
-                MergedProfiles = mergedProfiles
+                MergedProfiles = analysisProfiles
             };
         }
 

