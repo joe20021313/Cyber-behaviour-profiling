@@ -88,6 +88,14 @@ namespace Cyber_behaviour_profiling
             narrative.TotalSeconds <= 0 &&
             string.Equals(narrative.Grade, "SAFE", StringComparison.OrdinalIgnoreCase);
 
+        public static string ResolveSignatureSummary(AttackNarrative? narrative)
+        {
+            if (narrative == null || string.IsNullOrWhiteSpace(narrative.SignatureSummary))
+                return "Signature information unavailable.";
+
+            return narrative.SignatureSummary;
+        }
+
         public static AttackNarrative BuildNarrative(ProcessProfile profile, BehaviorReport report)
         {
             var events = profile.EventTimeline

@@ -14,6 +14,7 @@ namespace Cyber_behaviour_profiling
     public sealed class InvestigationFinding
     {
         public string Description { get; set; } = "";
+        public string ArtifactPath { get; set; } = "";
         public FindingSeverity Severity { get; set; } = FindingSeverity.Info;
         public List<InvestigationFinding> Children { get; set; } = new();
     }
@@ -210,6 +211,7 @@ namespace Cyber_behaviour_profiling
                     {
                         Description = $"New executable dropped: {file.FullPath} " +
                                       $"(size: {file.Size:N0} bytes, trust: {signature.ShortLabel})",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
                     };
 
@@ -245,6 +247,7 @@ namespace Cyber_behaviour_profiling
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"Known malware artifact appeared: {file.FullPath}",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
                     });
                 }
@@ -255,6 +258,7 @@ namespace Cyber_behaviour_profiling
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"New file in sensitive directory: {file.FullPath} ({file.Size:N0} bytes)",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Info
                     });
                 }
@@ -273,6 +277,7 @@ namespace Cyber_behaviour_profiling
                     var finding = new InvestigationFinding
                     {
                         Description = $"Executable modified during monitoring: {file.FullPath} (trust: {signature.ShortLabel})",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Warning
                     };
 
@@ -292,6 +297,7 @@ namespace Cyber_behaviour_profiling
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"Executable deleted (cleanup?): {path}",
+                        ArtifactPath = path,
                         Severity = FindingSeverity.Warning
                     });
                 }
@@ -358,6 +364,7 @@ namespace Cyber_behaviour_profiling
                     {
                         Description = $"Executable appeared after connecting to {destination}: " +
                                       $"{file.FullPath} (trust: {signature.ShortLabel})",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
                     };
 
@@ -381,6 +388,7 @@ namespace Cyber_behaviour_profiling
                     {
                         Description = $"New file appeared after connecting to {destination}: " +
                                       $"{Path.GetFileName(file.FullPath)} ({file.Size:N0} bytes)",
+                        ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Info
                     });
                 }
@@ -404,6 +412,7 @@ namespace Cyber_behaviour_profiling
                         result.Findings.Add(new InvestigationFinding
                         {
                             Description = $"Executable in download directory: {f.FullPath}",
+                            ArtifactPath = f.FullPath,
                             Severity = FindingSeverity.Warning
                         });
                     }

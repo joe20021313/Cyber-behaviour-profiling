@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using Microsoft.Win32;
@@ -11,6 +12,46 @@ public static class Simulator
 
     private static CancellationTokenSource _cts = new();
     private static Task? _currentSequence = null;
+    private static readonly byte[] _exitStub = [0x31, 0xC0, 0xC3];
+
+    private const uint ProcessCreateThread = 0x0002;
+    private const uint ProcessQueryInformation = 0x0400;
+    private const uint ProcessVmOperation = 0x0008;
+    private const uint ProcessVmWrite = 0x0020;
+    private const uint MemCommitReserve = 0x3000;
+    private const uint PageExecuteReadWrite = 0x40;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, int processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr VirtualAllocEx(
+        IntPtr processHandle,
+        IntPtr address,
+        UIntPtr size,
+        uint allocationType,
+        uint protect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteProcessMemory(
+        IntPtr processHandle,
+        IntPtr baseAddress,
+        byte[] buffer,
+        int size,
+        out IntPtr bytesWritten);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateRemoteThread(
+        IntPtr processHandle,
+        IntPtr threadAttributes,
+        uint stackSize,
+        IntPtr startAddress,
+        IntPtr parameter,
+        uint creationFlags,
+        out uint threadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     public static async Task Main()
     {
@@ -139,7 +180,9 @@ public static class Simulator
         await Phase("2 — SCHEDULED TASK PERSISTENCE",   () => Mal2_ScheduledTask(ct), ct);
         await Phase("3 — FIREWALL EVASION",             () => Mal2_FirewallEvasion(ct), ct);
         await Phase("4 — CLEAR EVENT LOGS",             () => Mal2_ClearEventLogs(ct), ct);
-        await Phase("5 — MEMORY INJECTION (FILELESS)",  () => Mal2_FilelessExecution(ct), ct);
+        await Phase("5 — HIDDEN POWERSHELL (FILELESS)", () => Mal2_FilelessExecution(ct), ct);
+        await Phase("6 — REMOTE THREAD INJECTION",      () => Mal2_RemoteThreadInjection(ct), ct);
+        await Phase("7 — PROCESS HOLLOWING (SYSMON NOTE)", () => Mal2_ProcessHollowingNote(ct), ct);
     }
 
     static async Task RunSuspicious2(CancellationToken ct)
@@ -819,6 +862,104 @@ public static class Simulator
         Log("Spawning powershell with hidden window and bypass to simulate fileless execution...");
         await Spawn("powershell.exe", "-w hidden -ep bypass -nop -c \"Start-Sleep -Seconds 5\"", showWindow: false);
         await Task.Delay(2000, ct);
+    }
+
+    static async Task Mal2_RemoteThreadInjection(CancellationToken ct)
+    {
+        Log("Launching notepad.exe as a sacrificial remote-thread target...");
+        using var sacrificial = Process.Start(new ProcessStartInfo("notepad.exe")
+        {
+            UseShellExecute = true
+        });
+
+        if (sacrificial == null)
+        {
+            Log("  Failed to launch notepad.exe; skipping injection phase.");
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(1500, ct);
+
+            uint access = ProcessCreateThread | ProcessQueryInformation | ProcessVmOperation | ProcessVmWrite;
+            IntPtr processHandle = OpenProcess(access, false, sacrificial.Id);
+            if (processHandle == IntPtr.Zero)
+            {
+                Log($"  OpenProcess failed ({Marshal.GetLastWin32Error()}); skipping.");
+                return;
+            }
+
+            try
+            {
+                IntPtr remoteBuffer = VirtualAllocEx(
+                    processHandle,
+                    IntPtr.Zero,
+                    new UIntPtr((uint)_exitStub.Length),
+                    MemCommitReserve,
+                    PageExecuteReadWrite);
+
+                if (remoteBuffer == IntPtr.Zero)
+                {
+                    Log($"  VirtualAllocEx failed ({Marshal.GetLastWin32Error()}); skipping.");
+                    return;
+                }
+
+                if (!WriteProcessMemory(processHandle, remoteBuffer, _exitStub, _exitStub.Length, out IntPtr bytesWritten) ||
+                    bytesWritten.ToInt64() != _exitStub.Length)
+                {
+                    Log($"  WriteProcessMemory failed ({Marshal.GetLastWin32Error()}); skipping.");
+                    return;
+                }
+
+                IntPtr remoteThread = CreateRemoteThread(
+                    processHandle,
+                    IntPtr.Zero,
+                    0,
+                    remoteBuffer,
+                    IntPtr.Zero,
+                    0,
+                    out uint threadId);
+
+                if (remoteThread == IntPtr.Zero)
+                {
+                    Log($"  CreateRemoteThread failed ({Marshal.GetLastWin32Error()}); skipping.");
+                    return;
+                }
+
+                try
+                {
+                    Log($"  Remote thread created in notepad.exe (PID {sacrificial.Id}, TID {threadId}).");
+                    await Task.Delay(1000, ct);
+                }
+                finally
+                {
+                    CloseHandle(remoteThread);
+                }
+            }
+            finally
+            {
+                CloseHandle(processHandle);
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (!sacrificial.HasExited)
+                    sacrificial.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    static async Task Mal2_ProcessHollowingNote(CancellationToken ct)
+    {
+        Log("Process tampering detection is wired to Sysmon Event ID 25.");
+        Log("  Full process hollowing is intentionally not simulated here because it requires destructive image replacement in another process.");
+        await Task.Delay(1000, ct);
     }
 
     static async Task Sus2_ServiceEnum(CancellationToken ct)

@@ -134,6 +134,7 @@ public class FileOperationsData
     public List<string> noise_extensions { get; set; }
     public List<string> noise_paths { get; set; }
     public List<string> malware_artifacts { get; set; }
+    public List<string> browser_credential_dirs { get; set; }
 }
 
 public class RegistryData
@@ -155,6 +156,7 @@ public class ProcessesData
     public List<NamedIndicator> lolbins { get; set; }
     public List<NamedIndicator> accessibility_binaries { get; set; }
     public List<string> office_apps { get; set; }
+    public List<string> browser_processes { get; set; }
     public List<CommandIndicator> suspicious_commands { get; set; }
 }
 
@@ -255,8 +257,10 @@ public static class MapToData
     public static HashSet<string> _noiseExtensions = new(StringComparer.OrdinalIgnoreCase);
     public static List<string> _noisePaths = new();
     public static HashSet<string> _malwareArtifacts = new(StringComparer.OrdinalIgnoreCase);
+    public static List<string> _browserCredentialDirs = new();
     public static List<string> _benignServices = new();
     public static HashSet<string> _officeApps = new(StringComparer.OrdinalIgnoreCase);
+    public static HashSet<string> _browserProcesses = new(StringComparer.OrdinalIgnoreCase);
 
     public static void ResetSession()
     {
@@ -456,10 +460,15 @@ public static class MapToData
         _malwareArtifacts = new HashSet<string>(
             data.file_operations?.malware_artifacts ?? new(),
             StringComparer.OrdinalIgnoreCase);
+        _browserCredentialDirs = data.file_operations?.browser_credential_dirs?
+            .Select(s => s.ToLowerInvariant()).ToList() ?? new();
         _benignServices = data.registry?.benign_services?
             .Select(s => s.ToLowerInvariant()).ToList() ?? new();
         _officeApps = new HashSet<string>(
             data.processes?.office_apps ?? new(),
+            StringComparer.OrdinalIgnoreCase);
+        _browserProcesses = new HashSet<string>(
+            data.processes?.browser_processes ?? new(),
             StringComparer.OrdinalIgnoreCase);
     }
 

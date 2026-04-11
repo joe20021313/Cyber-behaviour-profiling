@@ -94,6 +94,55 @@ public class SystemDiscoveryTests
     }
 
     [Fact]
+    public void Analyze_MultipleNetworkEvents_DoNotDuplicateSameDroppedExecutable()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string uniqueDir = Path.Combine(appData, "WindowsUpdate", "cache", $"sd-dedupe-{Guid.NewGuid():N}");
+            string payloadPath = Path.Combine(uniqueDir, "payload.exe");
+
+            Directory.CreateDirectory(uniqueDir);
+            try
+            {
+                var monitoredDirs = SystemDiscovery.GetMonitoredDirectories(MapToData.SensitiveDirs as IReadOnlyList<string>);
+                var profile = ProfileFactory.Empty("TestApp.exe", 2_000_002_002);
+                profile.DirectorySnapshotBefore = SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
+
+                File.WriteAllText(payloadPath, "MZ");
+                DateTime observedAt = DateTime.Now;
+
+                ProfileFactory.AddEvent(
+                    profile,
+                    "DNS_Query",
+                    "pastebin.com",
+                    "pastebin.com",
+                    "dns_c2",
+                    timestamp: observedAt,
+                    lastSeen: observedAt);
+                ProfileFactory.AddEvent(
+                    profile,
+                    "NetworkConnect",
+                    "pastebin.com",
+                    "pastebin.com (93.184.216.34)",
+                    "network_c2",
+                    timestamp: observedAt.AddMilliseconds(500),
+                    lastSeen: observedAt.AddMilliseconds(500));
+
+                var report = BehaviorAnalyzer.Analyze(profile);
+
+                Assert.NotNull(report.NetworkInvestigation);
+                Assert.Single(report.NetworkInvestigation!.Findings,
+                    f => f.ArtifactPath.Equals(payloadPath, StringComparison.OrdinalIgnoreCase));
+            }
+            finally
+            {
+                try { Directory.Delete(uniqueDir, recursive: true); } catch { }
+            }
+        }, loadData: true);
+    }
+
+    [Fact]
     public void CommandLineMatchesRule_NormalizesExecutableSuffix()
     {
         Assert.True(MapToData.CommandLineMatchesRule(

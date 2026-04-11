@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 
 namespace Cyber_behaviour_profiling
 {
@@ -19,7 +18,6 @@ namespace Cyber_behaviour_profiling
 
     public enum SemanticCheckId
     {
-        UnsignedBinary,
         SuspiciousExecutionPath,
         MissingBinaryOnDisk,
         ProcessExitedBeforeAnalysis,
@@ -151,7 +149,7 @@ namespace Cyber_behaviour_profiling
             public string Source { get; set; } = "";
         }
 
-        // P/Invoke declarations for process token inspection and Authenticode verification
+        // P/Invoke declarations for process token inspection.
         [DllImport("advapi32.dll", SetLastError = true)]
         private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
 
@@ -163,39 +161,6 @@ namespace Cyber_behaviour_profiling
         private static extern bool CloseHandle(IntPtr handle);
 
         private const uint TOKEN_QUERY = 0x0008;
-
-        [DllImport("wintrust.dll", SetLastError = false, CharSet = CharSet.Unicode)]
-        private static extern uint WinVerifyTrust(IntPtr hwnd, ref Guid pgActionID, ref WINTRUST_DATA pWVTData);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WINTRUST_FILE_INFO
-        {
-            public uint cbStruct;
-            public IntPtr pcwszFilePath;
-            public IntPtr hFile;
-            public IntPtr pgKnownSubject;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WINTRUST_DATA
-        {
-            public uint cbStruct;
-            public IntPtr pPolicyCallbackData;
-            public IntPtr pSIPClientData;
-            public uint dwUIChoice;
-            public uint fdwRevocationChecks;
-            public uint dwUnionChoice;
-            public IntPtr pFile;
-            public uint dwStateAction;
-            public IntPtr hWVTStateData;
-            public IntPtr pwszURLReference;
-            public uint dwProvFlags;
-            public uint dwUIContext;
-            public IntPtr pSignatureSettings;
-        }
-
-        private static readonly Guid WintrustActionGenericVerify =
-            new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
         public static BehaviorReport Analyze(ProcessProfile profile)
         {
@@ -531,6 +496,12 @@ namespace Cyber_behaviour_profiling
                 .Count();
         }
 
+        internal static List<SemanticCheck> GetSeDebugPrivilegeChecksForTesting(
+            ProcessContext ctx,
+            IReadOnlyCollection<SuspiciousEvent> events,
+            ProcessProfile profile) =>
+            CheckSeDebugPrivilegeSignals(ctx, events, profile).ToList();
+
         private static InvestigationResult? RunNetworkInvestigation(
             List<SuspiciousEvent> events, ProcessProfile profile)
         {
@@ -558,11 +529,8 @@ namespace Cyber_behaviour_profiling
 
                     foreach (var finding in r.Findings)
                     {
-                        // Extract the file path from the finding description to deduplicate
-                        // across multiple network events. A file is attributed only to the
-                        // first (closest-in-time) network event that claims it.
-                        string? filePath = ExtractFilePathFromFinding(finding.Description);
-                        if (filePath != null && !reportedFilePaths.Add(filePath))
+                        if (!string.IsNullOrWhiteSpace(finding.ArtifactPath) &&
+                            !reportedFilePaths.Add(finding.ArtifactPath))
                             continue;
 
                         combined.Findings.Add(finding);
@@ -579,19 +547,6 @@ namespace Cyber_behaviour_profiling
                 InvestigationLog.Write($"Network investigation error: {ex.Message}");
                 return null;
             }
-        }
-
-        private static string? ExtractFilePathFromFinding(string description)
-        {
-            // Both finding formats end with the file reference:
-            //   "... connecting to X: C:\full\path\file.ext (trust: ...)"
-            //   "... connecting to X: filename.ext (N bytes)"
-            // Use the last ": " to split off the file part, then strip trailing " (...)".
-            int lastColon = description.LastIndexOf(": ", StringComparison.Ordinal);
-            if (lastColon < 0) return description;
-            string fileRef = description[(lastColon + 2)..];
-            int parenIdx = fileRef.LastIndexOf(" (", StringComparison.Ordinal);
-            return parenIdx > 0 ? fileRef[..parenIdx] : fileRef;
         }
 
         private static List<string> BuildSafeReasons(
@@ -936,7 +891,6 @@ namespace Cyber_behaviour_profiling
 
         private static readonly HashSet<SemanticCheckId> _softDrivenChecks = new()
         {
-            SemanticCheckId.UnsignedBinary,
             SemanticCheckId.SuspiciousExecutionPath,
             SemanticCheckId.DeepAncestryChain,
             SemanticCheckId.AllActivityInTwoSecondBurst,
@@ -944,7 +898,6 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.MassiveAttemptCountForShortRuntime,
             SemanticCheckId.ExcessiveHandleCount,
             SemanticCheckId.DisproportionateMemoryUse,
-            SemanticCheckId.InheritedSeDebugPrivilege,
             SemanticCheckId.HeadlessConsoleApp,
             SemanticCheckId.ImmediateHighActivityOnSpawn,
             SemanticCheckId.HighOverallEventRate,
@@ -1116,49 +1069,8 @@ namespace Cyber_behaviour_profiling
                 ThreatImpact.Suspicious,
                 $"{ctx.NetworkConnCount} outbound connection(s) alongside other suspicious activity");
 
-            bool parentAlsoHasDebug = false;
-            try
-            {
-                if (ctx.ParentProcess != "UNKNOWN")
-                {
-                    using var parentSearcher = new ManagementObjectSearcher(
-                        $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = {profile.ProcessId}");
-                    foreach (ManagementObject row in parentSearcher.Get())
-                    {
-                        int ppid = (int)(uint)row["ParentProcessId"];
-                        if (ppid > 0 && ppid != profile.ProcessId)
-                        {
-                            try
-                            {
-                                using var parentProc = Process.GetProcessById(ppid);
-                                parentAlsoHasDebug = CheckDebugPrivilege(parentProc.Handle);
-                            }
-                            catch { }
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            bool hasCredentialActivity = HasCredentialRuntimeActivity(events);
-
-            bool selfEnabledDebug = ctx.HasDebugPriv && !parentAlsoHasDebug;
-            bool inheritedDebug = ctx.HasDebugPriv && parentAlsoHasDebug;
-
-            yield return Check(SemanticCheckId.SeDebugPrivilegeSelfEnabled,
-                selfEnabledDebug,
-                ThreatImpact.Malicious,
-                "Process self-granted SeDebugPrivilege");
-
-            yield return Check(SemanticCheckId.SeDebugPrivilegeWithCredentialActivity,
-                inheritedDebug && hasCredentialActivity,
-                ThreatImpact.Malicious,
-                "SeDebugPrivilege active during credential file access");
-
-            yield return Check(SemanticCheckId.InheritedSeDebugPrivilege,
-                inheritedDebug && !hasCredentialActivity,
-                ThreatImpact.Inconclusive,
-                $"SeDebugPrivilege inherited from '{ctx.ParentProcess}'");
+            foreach (var check in CheckSeDebugPrivilegeSignals(ctx, events, profile))
+                yield return check;
 
             yield return Check(SemanticCheckId.UnexpectedElevation,
                 ShouldFlagUnexpectedElevation(ctx, events, profile),
@@ -1173,6 +1085,47 @@ namespace Cyber_behaviour_profiling
             yield return Check(SemanticCheckId.ImmediateHighActivityOnSpawn,
                 immediatelyActive,
                 ThreatImpact.Inconclusive, $"{events.Count} events in {ctx.UptimeSeconds:F1}s of startup");
+        }
+
+        private static IEnumerable<SemanticCheck> CheckSeDebugPrivilegeSignals(
+            ProcessContext ctx,
+            IReadOnlyCollection<SuspiciousEvent> events,
+            ProcessProfile profile)
+        {
+            bool hasCredentialActivity = HasCredentialRuntimeActivity(events);
+            bool hasInjectionOrTamperingActivity = events.Any(e =>
+                e.EventType is "RemoteThreadInjection" or "ProcessTampering" ||
+                e.Category is "process_injection" or "process_tampering");
+
+            bool hasSuspiciousCompanionActivity =
+                HasSuspiciousCommandContext(profile) ||
+                profile.ExeDropPaths.Any() ||
+                events.Any(e => e.Category is "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation");
+
+            bool debugPrivActivelyUsed = ctx.HasDebugPriv &&
+                (hasCredentialActivity || hasInjectionOrTamperingActivity);
+            bool debugPrivSetWithSuspicion = ctx.HasDebugPriv &&
+                !debugPrivActivelyUsed &&
+                hasSuspiciousCompanionActivity;
+            bool debugPrivSetOnly = ctx.HasDebugPriv &&
+                !debugPrivActivelyUsed &&
+                !debugPrivSetWithSuspicion;
+
+            yield return Check(SemanticCheckId.SeDebugPrivilegeSelfEnabled,
+                debugPrivActivelyUsed,
+                ThreatImpact.Malicious,
+                "SeDebugPrivilege was enabled and then exercised during credential access, injection, or process tampering.",
+                isHardIndicator: true);
+
+            yield return Check(SemanticCheckId.SeDebugPrivilegeWithCredentialActivity,
+                debugPrivSetWithSuspicion,
+                ThreatImpact.Suspicious,
+                "SeDebugPrivilege is enabled alongside suspicious command, staging, or persistence activity.");
+
+            yield return Check(SemanticCheckId.InheritedSeDebugPrivilege,
+                debugPrivSetOnly,
+                ThreatImpact.Inconclusive,
+                "SeDebugPrivilege is enabled, but no corroborating misuse was observed.");
         }
 
         internal static bool ShouldFlagUnexpectedElevation(
@@ -1293,12 +1246,6 @@ namespace Cyber_behaviour_profiling
                 $"{discoveryTools.Count} reconnaissance tools executed: {string.Join(", ", discoveryTools.Take(8))}");
         }
 
-        private static readonly HashSet<string> _browserProcesses = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
-            "opera.exe", "vivaldi.exe", "iexplore.exe", "microsoftedge.exe"
-        };
-
         private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(List<SuspiciousEvent> events, ProcessProfile profile)
         {
             var areas = new HashSet<string>();
@@ -1312,25 +1259,17 @@ namespace Cyber_behaviour_profiling
                     raw.Contains("\\vault\\") || ind.Contains("credential"))
                     areas.Add("WindowsCredentialStore");
 
-                if (raw.Contains("\\google\\chrome\\") || raw.Contains("\\mozilla\\") ||
-                    raw.Contains("\\microsoft\\edge\\") || raw.Contains("\\brave\\"))
+                if (MapToData._browserCredentialDirs.Any(d => raw.Contains(d)))
                     areas.Add("BrowserCredentials");
 
-                if (ev.EventType == "Registry" &&
-                    (ind.Contains("vnc") || ind.Contains("putty") || ind.Contains("intelliforms")))
+                if (ev.EventType == "Registry" && ev.Category == "registry_credential_access")
                     areas.Add("ThirdPartyCredentials");
 
-                if (ev.EventType == "Registry" &&
-                    (raw.Contains("currentversion\\run") || raw.Contains("winlogon") ||
-                     raw.Contains("\\services")))
+                if (ev.EventType == "Registry" && ev.Category == "registry_persistence")
                     areas.Add("PersistenceMechanisms");
 
-                if (raw.Contains("amsi") || raw.Contains("image file execution options"))
+                if (ev.EventType == "Registry" && ev.Category == "registry_defense_evasion")
                     areas.Add("DefenseTools");
-
-                if (raw.Contains("\\public\\") || raw.Contains("\\perflogs\\") ||
-                    raw.Contains("\\fonts\\") || raw.Contains("\\$recycle.bin\\"))
-                    areas.Add("UnusualWriteLocations");
 
                 if (ev.EventType == "NetworkConnect" || ev.EventType == "DNS_Query")
                     areas.Add("NetworkCommunication");
@@ -1346,11 +1285,8 @@ namespace Cyber_behaviour_profiling
             bool hasNetwork = events.Any(e => e.EventType == "NetworkConnect" || e.EventType == "DNS_Query");
             bool contextIsExec = events
                 .Where(e => e.EventType == "ContextSignal")
-                .Any(e =>
-                {
-                    string ext = Path.GetExtension(e.RawData ?? "").ToLowerInvariant();
-                    return ext is ".exe" or ".dll" or ".bat" or ".ps1" or ".vbs" or ".cmd";
-                });
+                .Any(e => MapToData._executableExtensions.Contains(
+                    Path.GetExtension(e.RawData ?? "").ToLowerInvariant()));
             if (events.Any(e => e.EventType == "ContextSignal") && (hasNetwork || contextIsExec))
                 areas.Add("UnusualWriteLocations");
 
@@ -1359,7 +1295,7 @@ namespace Cyber_behaviour_profiling
                 ThreatImpact.Malicious, "Accessed Windows credential vault");
 
             bool browserCredAccess = areas.Contains("BrowserCredentials");
-            bool isOwnBrowser = _browserProcesses.Contains(profile.ProcessName ?? "");
+            bool isOwnBrowser = MapToData._browserProcesses.Contains(profile.ProcessName ?? "");
             yield return Check(SemanticCheckId.BrowserCredentialAccess,
                 browserCredAccess && !isOwnBrowser,
                 ThreatImpact.Malicious,
@@ -2104,7 +2040,6 @@ namespace Cyber_behaviour_profiling
 
         private static string GetCheckName(SemanticCheckId id) => id switch
         {
-            SemanticCheckId.UnsignedBinary => "Unsigned Binary",
             SemanticCheckId.SuspiciousExecutionPath => "Suspicious Execution Path",
             SemanticCheckId.MissingBinaryOnDisk => "Missing Binary on Disk",
             SemanticCheckId.ProcessExitedBeforeAnalysis => "Process Exited Before Analysis",
@@ -2122,9 +2057,9 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.ExcessiveHandleCount => "Excessive Handle Count",
             SemanticCheckId.DisproportionateMemoryUse => "Disproportionate Memory Use",
             SemanticCheckId.UnexpectedNetworkConnections => "Unexpected Network Connections",
-            SemanticCheckId.SeDebugPrivilegeSelfEnabled => "SeDebugPrivilege Self-Enabled",
-            SemanticCheckId.SeDebugPrivilegeWithCredentialActivity => "SeDebugPrivilege with Credential Activity",
-            SemanticCheckId.InheritedSeDebugPrivilege => "Inherited SeDebugPrivilege",
+            SemanticCheckId.SeDebugPrivilegeSelfEnabled => "SeDebugPrivilege Actively Used",
+            SemanticCheckId.SeDebugPrivilegeWithCredentialActivity => "SeDebugPrivilege Set with Suspicious Activity",
+            SemanticCheckId.InheritedSeDebugPrivilege => "SeDebugPrivilege Set (Unused)",
             SemanticCheckId.UnexpectedElevation => "Unexpected Elevation",
             SemanticCheckId.HeadlessConsoleApp => "Headless Console App",
             SemanticCheckId.ImmediateHighActivityOnSpawn => "Immediate High Activity on Spawn",
@@ -2176,80 +2111,6 @@ namespace Cyber_behaviour_profiling
                 Impact = fired ? impact : ThreatImpact.Safe,
                 Reason = reason
             };
-        }
-        private static string? ExtractPublisherName(string filePath)
-        {
-            try
-            {
-#pragma warning disable SYSLIB0057
-                var cert = X509Certificate.CreateFromSignedFile(filePath);
-#pragma warning restore SYSLIB0057
-                if (cert == null) return null;
-
-                using var cert2 = new X509Certificate2(cert);
-                string subject = cert2.Subject ?? "";
-                foreach (var part in subject.Split(','))
-                {
-                    string trimmed = part.Trim();
-                    if (trimmed.StartsWith("O=", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string org = trimmed.Substring(2).Trim().Trim('"');
-                        if (!string.IsNullOrWhiteSpace(org))
-                            return org;
-                    }
-                }
-
-                string simpleName = cert2.GetNameInfo(X509NameType.SimpleName, false);
-                return string.IsNullOrWhiteSpace(simpleName) ? null : simpleName;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static bool VerifyAuthenticode(string filePath)
-        {
-            IntPtr pFilePath = IntPtr.Zero;
-            IntPtr pFile = IntPtr.Zero;
-            try
-            {
-                pFilePath = Marshal.StringToHGlobalUni(filePath);
-                var fileInfo = new WINTRUST_FILE_INFO
-                {
-                    cbStruct = (uint)Marshal.SizeOf<WINTRUST_FILE_INFO>(),
-                    pcwszFilePath = pFilePath,
-                    hFile = IntPtr.Zero,
-                    pgKnownSubject = IntPtr.Zero
-                };
-                pFile = Marshal.AllocHGlobal(Marshal.SizeOf<WINTRUST_FILE_INFO>());
-                Marshal.StructureToPtr(fileInfo, pFile, false);
-
-                Guid actionId = WintrustActionGenericVerify;
-                var trust = new WINTRUST_DATA
-                {
-                    cbStruct = (uint)Marshal.SizeOf<WINTRUST_DATA>(),
-                    pPolicyCallbackData = IntPtr.Zero,
-                    pSIPClientData = IntPtr.Zero,
-                    dwUIChoice = 2,
-                    fdwRevocationChecks = 0,
-                    dwUnionChoice = 1,
-                    pFile = pFile,
-                    dwStateAction = 0,
-                    hWVTStateData = IntPtr.Zero,
-                    pwszURLReference = IntPtr.Zero,
-                    dwProvFlags = 0x00000010,
-                    dwUIContext = 0,
-                    pSignatureSettings = IntPtr.Zero
-                };
-                return WinVerifyTrust(IntPtr.Zero, ref actionId, ref trust) == 0;
-            }
-            catch { return false; }
-            finally
-            {
-                if (pFilePath != IntPtr.Zero) Marshal.FreeHGlobal(pFilePath);
-                if (pFile != IntPtr.Zero) Marshal.FreeHGlobal(pFile);
-            }
         }
 
         private static double GetTrustMultiplier(string name, string nameNoExt, ProcessContext ctx)

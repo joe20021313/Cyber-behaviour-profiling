@@ -197,6 +197,20 @@ public class AttackNarratorSmokeTests
         Assert.NotEmpty(narrative.LaunchContext);
         Assert.Contains("testapp.exe", narrative.LaunchContext[0], StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void ResolveSignatureSummary_WithoutResolvedState_ReportsUnavailable()
+    {
+        string summary = AttackNarrator.ResolveSignatureSummary(new AttackNarrative
+        {
+            HasSignature = false,
+            IsSigned = false,
+            SignerName = "",
+            SignatureSummary = ""
+        });
+
+        Assert.Equal("Signature information unavailable.", summary);
+    }
 }
 
 public class MapToDataMechanismTests
@@ -677,6 +691,65 @@ public class RuntimeCorroborationTests
     }
 }
 
+public class DebugPrivilegePolicyTests
+{
+    [Fact]
+    public void SeDebugPrivilege_WithCredentialActivity_IsHardMaliciousIndicator()
+    {
+        var checks = BehaviorAnalyzer.GetSeDebugPrivilegeChecksForTesting(
+            new ProcessContext { HasDebugPriv = true },
+            new List<SuspiciousEvent>
+            {
+                ProfileFactory.Event(
+                    "DPAPI_Decrypt",
+                    "CryptUnprotectData",
+                    "CryptUnprotectData",
+                    "dpapi_decrypt")
+            },
+            ProfileFactory.Empty("collector.exe", 2_000_000_540));
+
+        var activeUse = Assert.Single(checks, c => c.IsFired);
+        Assert.Equal(SemanticCheckId.SeDebugPrivilegeSelfEnabled, activeUse.Id);
+        Assert.Equal(ThreatImpact.Malicious, activeUse.Impact);
+        Assert.True(activeUse.IsHardIndicator);
+    }
+
+    [Fact]
+    public void SeDebugPrivilege_WithSuspiciousCompanionActivity_IsSuspicious()
+    {
+        var checks = BehaviorAnalyzer.GetSeDebugPrivilegeChecksForTesting(
+            new ProcessContext { HasDebugPriv = true },
+            new List<SuspiciousEvent>
+            {
+                ProfileFactory.Event(
+                    "Registry",
+                    "run",
+                    @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "registry_persistence")
+            },
+            ProfileFactory.Empty("loader.exe", 2_000_000_541));
+
+        var suspicious = Assert.Single(checks, c => c.IsFired);
+        Assert.Equal(SemanticCheckId.SeDebugPrivilegeWithCredentialActivity, suspicious.Id);
+        Assert.Equal(ThreatImpact.Suspicious, suspicious.Impact);
+        Assert.False(suspicious.IsHardIndicator);
+    }
+
+    [Fact]
+    public void SeDebugPrivilege_WithoutCorroboration_IsInconclusive()
+    {
+        var checks = BehaviorAnalyzer.GetSeDebugPrivilegeChecksForTesting(
+            new ProcessContext { HasDebugPriv = true },
+            new List<SuspiciousEvent>(),
+            ProfileFactory.Empty("collector.exe", 2_000_000_542));
+
+        var setOnly = Assert.Single(checks, c => c.IsFired);
+        Assert.Equal(SemanticCheckId.InheritedSeDebugPrivilege, setOnly.Id);
+        Assert.Equal(ThreatImpact.Inconclusive, setOnly.Impact);
+        Assert.False(setOnly.IsHardIndicator);
+    }
+}
+
 public class BehaviorAnalyzerVerdictTests
 {
     [Fact]
@@ -997,6 +1070,50 @@ public class BehaviorAnalyzerVerdictTests
             Assert.True(report.ChainResult.HasHardIndicator);
             Assert.Contains(report.FiredCheckNames,
                 name => name == "LSASS Memory Access");
+        });
+    }
+
+    [Fact]
+    public void RemoteThreadInjection_ReturnsMalicious()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.WithEvent(
+                "RemoteThreadInjection",
+                "notepad.exe",
+                "notepad.exe",
+                "process_injection",
+                "injector.exe",
+                2_000_000_643);
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.Equal(ThreatImpact.Malicious, report.FinalVerdict);
+            Assert.True(report.ChainResult.HasHardIndicator);
+            Assert.Contains(report.FiredCheckNames,
+                name => name == "Remote Thread Injection");
+        });
+    }
+
+    [Fact]
+    public void ProcessTampering_ReturnsMalicious()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.WithEvent(
+                "ProcessTampering",
+                "svchost.exe",
+                "svchost.exe",
+                "process_tampering",
+                "hollower.exe",
+                2_000_000_644);
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.Equal(ThreatImpact.Malicious, report.FinalVerdict);
+            Assert.True(report.ChainResult.HasHardIndicator);
+            Assert.Contains(report.FiredCheckNames,
+                name => name == "Process Tampering Detected");
         });
     }
 

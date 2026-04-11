@@ -160,6 +160,16 @@
       "\\.vs\\",
       "\\appdata\\local\\microsoft\\clr_security_config\\"
     ],
+    "browser_credential_dirs": [
+      "\\google\\chrome\\",
+      "\\mozilla\\firefox\\",
+      "\\mozilla\\",
+      "\\microsoft\\edge\\",
+      "\\brave\\",
+      "\\opera software\\",
+      "\\yandex\\yandexbrowser\\",
+      "\\vivaldi\\"
+    ],
     "malware_artifacts": [
       "mimikatz.exe", "procdump.exe", "lazagne.exe", "sharphound.exe",
       "rubeus.exe", "seatbelt.exe", "winpeas.exe", "linpeas.sh",
@@ -351,6 +361,18 @@
         "dwm.exe"
       ]
     },
+    "browser_processes": [
+      "chrome.exe",
+      "msedge.exe",
+      "firefox.exe",
+      "brave.exe",
+      "opera.exe",
+      "vivaldi.exe",
+      "iexplore.exe",
+      "microsoftedge.exe",
+      "waterfox.exe",
+      "librewolf.exe"
+    ],
     "trusted_user_apps": {
       "multiplier": 0.8,
       "processes": [

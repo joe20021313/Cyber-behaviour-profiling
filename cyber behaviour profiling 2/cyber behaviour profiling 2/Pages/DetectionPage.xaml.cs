@@ -814,9 +814,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 bool hasRenderableContext = HasRenderableNarrativeContext(narrative);
                 if (narrative.HasObservedTimeline || hasRenderableContext)
                 {
-                    string signatureSummary = string.IsNullOrWhiteSpace(narrative.SignatureSummary)
-                        ? (narrative.IsSigned ? $"Valid digital signature present for {narrative.SignerName}" : "No digital signature present.")
-                        : narrative.SignatureSummary;
+                    string signatureSummary = AttackNarrator.ResolveSignatureSummary(narrative);
                     sb.AppendLine($"**Signature:** {signatureSummary}  ");
                     if (narrative.FirstSeen != DateTime.MinValue)
                         sb.AppendLine($"**Started:** {narrative.FirstSeen:yyyy-MM-dd HH:mm:ss}  ");
