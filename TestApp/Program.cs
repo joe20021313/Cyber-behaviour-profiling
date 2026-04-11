@@ -115,7 +115,7 @@ public static class Simulator
     static async Task RunSuspicious(CancellationToken ct)
     {
         await Phase("1 — BASELINE",                () => Baseline(ct), ct);
-        await Phase("2 — DIRECTORY ENUMERATION",   () => Sus_DirectoryEnum(ct), ct);
+        await Phase("2 — CREDENTIAL PROBE",        () => Sus_CredentialProbe(ct), ct);
         await Phase("3 — SYSTEM DISCOVERY TOOLS",  () => Sus_DiscoveryTools(ct), ct);
         await Phase("4 — PROCESS SPAWNING",        () => Sus_ProcessSpawns(ct), ct);
         await Phase("5 — SCRIPT ENGINE PROBING",   () => Sus_ScriptEngines(ct), ct);
@@ -469,32 +469,42 @@ public static class Simulator
         Log("  Done.");
     }
 
-    static async Task Sus_DirectoryEnum(CancellationToken ct)
+    // Simulates a failed credential probe — attempts to open protected credential files.
+    // Access is denied for most of these (Chrome locks Login Data, SAM is always protected),
+    // but the open ATTEMPT fires ETW FileIOCreate events which are classified as
+    // credential_file_access. This represents a real-world scenario where an attacker
+    // probes for credentials but cannot extract them (e.g. browser is running, no admin rights).
+    static async Task Sus_CredentialProbe(CancellationToken ct)
     {
-        string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        string[] dirs =
+        string[] targets =
         {
-            Path.Combine(localapp, "Google", "Chrome", "User Data"),
-            Path.Combine(localapp, "Microsoft", "Edge", "User Data"),
+            Path.Combine(localapp, "Google", "Chrome",   "User Data", "Default", "Login Data"),
+            Path.Combine(localapp, "Google", "Chrome",   "User Data", "Default", "Cookies"),
+            Path.Combine(localapp, "Microsoft", "Edge",  "User Data", "Default", "Login Data"),
             Path.Combine(appdata,  "Mozilla", "Firefox", "Profiles"),
-            Path.Combine(appdata,  "Microsoft", "Credentials"),
-            Path.Combine(appdata,  "Microsoft", "Protect"),
-            Path.Combine(home, ".ssh"),
-            Path.Combine(home, ".aws"),
-            Path.Combine(home, ".azure"),
-            Path.Combine(Environment.SystemDirectory, "config"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
+            Path.Combine(home,     ".ssh", "id_rsa"),
+            Path.Combine(home,     ".ssh", "known_hosts"),
+            @"C:\Windows\System32\config\SAM",
         };
 
-        Log("Enumerating sensitive directories and sampling readable files...");
-        foreach (var dir in dirs)
+        Log("Probing credential file locations (access will be denied for protected files)...");
+        foreach (var target in targets)
         {
             ct.ThrowIfCancellationRequested();
-            await ProbeDirectoryAsync(dir, ct, sampleRead: true);
-            await Task.Delay(300, ct);
+            try
+            {
+                using var fs = File.Open(target, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                Log($"  [opened] {target}");
+            }
+            catch
+            {
+                Log($"  [denied/absent] {target}");
+            }
+            await Task.Delay(400, ct);
         }
     }
 

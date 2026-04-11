@@ -240,7 +240,7 @@ namespace Cyber_behaviour_profiling
             checks.AddRange(CheckSuspiciousCommandSemantics(profile));
             checks.AddRange(CheckRuntimeAnomalies(ctx, events, profile, netInvestigation));
             checks.AddRange(CheckVelocityAndDensity(events));
-            checks.AddRange(CheckSystemAreaFootprint(events));
+            checks.AddRange(CheckSystemAreaFootprint(events, profile));
             checks.AddRange(CheckTemporalAnomalies(events, ctx));
             checks.AddRange(CheckContextFolderBehavior(ctx, events, profile));
             checks.AddRange(CheckExecutableDrops(ctx, events, profile));
@@ -1293,7 +1293,13 @@ namespace Cyber_behaviour_profiling
                 $"{discoveryTools.Count} reconnaissance tools executed: {string.Join(", ", discoveryTools.Take(8))}");
         }
 
-        private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(List<SuspiciousEvent> events)
+        private static readonly HashSet<string> _browserProcesses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe",
+            "opera.exe", "vivaldi.exe", "iexplore.exe", "microsoftedge.exe"
+        };
+
+        private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(List<SuspiciousEvent> events, ProcessProfile profile)
         {
             var areas = new HashSet<string>();
 
@@ -1352,9 +1358,13 @@ namespace Cyber_behaviour_profiling
                 areas.Contains("WindowsCredentialStore"),
                 ThreatImpact.Malicious, "Accessed Windows credential vault");
 
+            bool browserCredAccess = areas.Contains("BrowserCredentials");
+            bool isOwnBrowser = _browserProcesses.Contains(profile.ProcessName ?? "");
             yield return Check(SemanticCheckId.BrowserCredentialAccess,
-                areas.Contains("BrowserCredentials"),
-                ThreatImpact.Malicious, "Accessed browser credential storage");
+                browserCredAccess && !isOwnBrowser,
+                ThreatImpact.Malicious,
+                $"Non-browser process accessed browser credential storage",
+                isHardIndicator: true);
 
             yield return Check(SemanticCheckId.ThirdPartyCredentialStores,
                 areas.Contains("ThirdPartyCredentials"),
