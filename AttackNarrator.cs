@@ -30,6 +30,7 @@ namespace Cyber_behaviour_profiling
         public List<string> DeletedFiles { get; set; } = new();
         public List<string> DeletedRuntimeArtifactFiles { get; set; } = new();
         public List<string> LaunchContext { get; set; } = new();
+        public bool IsSpawnedProcess { get; set; }
         public List<SpawnedProcess> SpawnedCommands { get; set; } = new();
         public bool HasSignature { get; set; }
         public bool IsSigned { get; set; }
@@ -98,6 +99,8 @@ namespace Cyber_behaviour_profiling
             DateTime narrativeStart = ResolveNarrativeStart(profile);
 
 
+            bool isSpawned = launchContext.Count > 0;
+
             if (!events.Any())
                 return new AttackNarrative
                 {
@@ -113,6 +116,7 @@ namespace Cyber_behaviour_profiling
                     DeletedFiles     = profile.DeletedPaths.ToList(),
                     DeletedRuntimeArtifactFiles = profile.DeletedRuntimeArtifacts.ToList(),
                     LaunchContext    = launchContext,
+                    IsSpawnedProcess = isSpawned,
                     SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
                     HasSignature     = report.HasSignature,
                     IsSigned         = report.IsSigned,
@@ -140,6 +144,7 @@ namespace Cyber_behaviour_profiling
                 DeletedFiles     = profile.DeletedPaths.ToList(),
                 DeletedRuntimeArtifactFiles = profile.DeletedRuntimeArtifacts.ToList(),
                 LaunchContext    = launchContext,
+                IsSpawnedProcess = isSpawned,
                 SpawnedCommands  = profile.SpawnedCommandLines.ToList(),
                 HasSignature     = report.HasSignature,
                 IsSigned         = report.IsSigned,

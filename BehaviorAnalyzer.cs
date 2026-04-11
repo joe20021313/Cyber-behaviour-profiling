@@ -76,7 +76,8 @@ namespace Cyber_behaviour_profiling
         ExecutableFileDeleted,
         LsassMemoryAccess,
         RemoteThreadInjection,
-        ProcessTamperingDetected
+        ProcessTamperingDetected,
+        ReconnaissanceToolSpawning
     }
 
     public class ChainConfirmationResult
@@ -1278,6 +1279,18 @@ namespace Cyber_behaviour_profiling
                     true,
                     ThreatImpact.Inconclusive, $"Accessed {distinctIndicators} distinct sensitive system areas");
             }
+
+            var discoveryTools = events
+                .Where(e => e.EventType == "DiscoverySpawn")
+                .Select(e => e.MatchedIndicator)
+                .Where(m => !string.IsNullOrEmpty(m))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            yield return Check(SemanticCheckId.ReconnaissanceToolSpawning,
+                discoveryTools.Count >= 4,
+                ThreatImpact.Suspicious,
+                $"{discoveryTools.Count} reconnaissance tools executed: {string.Join(", ", discoveryTools.Take(8))}");
         }
 
         private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(List<SuspiciousEvent> events)

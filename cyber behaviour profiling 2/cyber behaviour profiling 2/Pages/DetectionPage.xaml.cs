@@ -863,9 +863,12 @@ namespace cyber_behaviour_profiling_2.Pages
 
                 if (narrative.Grade == "SAFE")
                 {
-                    AppendBulletSection(sb, "### Why considered safe", narrative.SafeReasons);
-                    sb.AppendLine("> Note: This assessment is limited to what was observed during the monitoring window.");
-                    sb.AppendLine();
+                    if (!narrative.IsSpawnedProcess)
+                    {
+                        AppendBulletSection(sb, "### Why considered safe", narrative.SafeReasons);
+                        sb.AppendLine("> Note: This assessment is limited to what was observed during the monitoring window.");
+                        sb.AppendLine();
+                    }
                     continue;
                 }
                 AppendBulletSection(sb, "### Detection Signals", narrative.DecisionReasons);
