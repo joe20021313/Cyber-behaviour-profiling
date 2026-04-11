@@ -547,13 +547,26 @@ namespace Cyber_behaviour_profiling
                 var afterSnapshot = SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
 
                 var combined = new InvestigationResult();
+                var reportedFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 foreach (var netEvent in networkEvents)
                 {
                     var r = SystemDiscovery.InvestigateNetworkEvent(
                         netEvent, profile,
                         profile.DirectorySnapshotBefore, afterSnapshot);
 
-                    combined.Findings.AddRange(r.Findings);
+                    foreach (var finding in r.Findings)
+                    {
+                        // Extract the file path from the finding description to deduplicate
+                        // across multiple network events. A file is attributed only to the
+                        // first (closest-in-time) network event that claims it.
+                        string? filePath = ExtractFilePathFromFinding(finding.Description);
+                        if (filePath != null && !reportedFilePaths.Add(filePath))
+                            continue;
+
+                        combined.Findings.Add(finding);
+                    }
+
                     if (r.OverallSuspicion > combined.OverallSuspicion)
                         combined.OverallSuspicion = r.OverallSuspicion;
                 }
@@ -565,6 +578,19 @@ namespace Cyber_behaviour_profiling
                 InvestigationLog.Write($"Network investigation error: {ex.Message}");
                 return null;
             }
+        }
+
+        private static string? ExtractFilePathFromFinding(string description)
+        {
+            // Both finding formats end with the file reference:
+            //   "... connecting to X: C:\full\path\file.ext (trust: ...)"
+            //   "... connecting to X: filename.ext (N bytes)"
+            // Use the last ": " to split off the file part, then strip trailing " (...)".
+            int lastColon = description.LastIndexOf(": ", StringComparison.Ordinal);
+            if (lastColon < 0) return description;
+            string fileRef = description[(lastColon + 2)..];
+            int parenIdx = fileRef.LastIndexOf(" (", StringComparison.Ordinal);
+            return parenIdx > 0 ? fileRef[..parenIdx] : fileRef;
         }
 
         private static List<string> BuildSafeReasons(
