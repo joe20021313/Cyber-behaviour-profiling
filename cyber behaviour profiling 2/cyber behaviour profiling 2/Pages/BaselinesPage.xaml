@@ -49,8 +49,8 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <ComboBox x:Name="ProcessDropdown" Grid.Column="0" IsEditable="True" StaysOpenOnEdit="True" VerticalAlignment="Center" Height="32" Padding="12,0"/>
-                    <TextBlock x:Name="DropdownHint" Text="e.g. onedrive.exe" IsHitTestVisible="False" VerticalAlignment="Center" Margin="12,0,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <ComboBox x:Name="ProcessDropdown" Grid.Column="0" IsEditable="False" VerticalAlignment="Center" Height="32" Padding="12,0" SelectionChanged="ProcessDropdown_SelectionChanged"/>
+                    <TextBlock x:Name="DropdownHint" Text="Select a running process..." IsHitTestVisible="False" VerticalAlignment="Center" Margin="12,0,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
                     <ui:Button x:Name="BrowseBtn" Content="Browse" Grid.Column="2" VerticalAlignment="Center" Click="BrowseButton_Click"/>
                     <ui:Button x:Name="RefreshBtn" Content="Refresh" Grid.Column="4" VerticalAlignment="Center" Click="RefreshProcessList_Click"/>
@@ -60,7 +60,7 @@
 
                 <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                     <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#EF4444" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="StatusText" Text="Select a process or browse, then click Start." FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="StatusText" Text="Pick a process from the list, then hit Start Recording." FontWeight="SemiBold" VerticalAlignment="Center"/>
                 </StackPanel>
                 <ProgressBar x:Name="RecordProgress" Visibility="Collapsed" IsIndeterminate="True" Margin="0,4,0,8" Height="4"/>
 

@@ -27,6 +27,7 @@ namespace cyber_behaviour_profiling_2.Pages
         private LiveMonitoringSession? _tempSession;
         private string _targetProcess = "";
         private ProcessBaseline? _capturedBaseline;
+        private List<string> _processItems = new();
         private int _recordingStartSnapshotCount;
         private int _lastMeaningfulSnapshotCount;
         private DateTime _lastMeaningfulProgressAt;
@@ -60,13 +61,37 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private void RefreshProcessList()
         {
-            var processes = Process.GetProcesses()
-                .Select(p => p.ProcessName + ".exe")
+            var current = ProcessDropdown.SelectedItem as string;
+
+            var running = Process.GetProcesses()
+                .Select(p => p.ProcessName)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            ProcessDropdown.ItemsSource = processes;
+            _processItems.Clear();
+            foreach (var name in running)
+                _processItems.Add(name);
+
+            ProcessDropdown.ItemsSource = null;
+            ProcessDropdown.ItemsSource = _processItems;
+
+            if (current != null && _processItems.Any(n => n.Equals(current, StringComparison.OrdinalIgnoreCase)))
+                ProcessDropdown.SelectedItem = _processItems.First(n => n.Equals(current, StringComparison.OrdinalIgnoreCase));
+
+            UpdateHintVisibility();
+        }
+
+        private void UpdateHintVisibility()
+        {
+            DropdownHint.Visibility = ProcessDropdown.SelectedItem == null
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        private void ProcessDropdown_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateHintVisibility();
         }
 
         private void RefreshProcessList_Click(object sender, RoutedEventArgs e)
@@ -83,8 +108,15 @@ namespace cyber_behaviour_profiling_2.Pages
             };
             if (dlg.ShowDialog() == true)
             {
-                ProcessDropdown.Text = Path.GetFileName(dlg.FileName);
-                DropdownHint.Visibility = Visibility.Collapsed;
+                string name = Path.GetFileNameWithoutExtension(dlg.FileName);
+                if (!_processItems.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _processItems.Insert(0, name);
+                    ProcessDropdown.ItemsSource = null;
+                    ProcessDropdown.ItemsSource = _processItems;
+                }
+                ProcessDropdown.SelectedItem = _processItems.First(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
+                UpdateHintVisibility();
             }
         }
 
@@ -92,15 +124,13 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             if (_state == RecordState.Idle || _state == RecordState.Error)
             {
-                _targetProcess = ProcessDropdown.Text?.Trim().ToLower() ?? "";
+                _targetProcess = (ProcessDropdown.SelectedItem as string)?.Trim().ToLower() ?? "";
                 if (string.IsNullOrEmpty(_targetProcess))
                 {
-                    SetError("Please select a process to monitor.");
+                    SetError("Pick a process from the list first.");
                     return;
                 }
                 if (!_targetProcess.EndsWith(".exe")) _targetProcess += ".exe";
-
-                DropdownHint.Visibility = Visibility.Collapsed;
                 _capturedBaseline = null;
                 _recordingStartSnapshotCount = 0;
                 _lastMeaningfulSnapshotCount = 0;
@@ -134,7 +164,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     }
                     catch (Exception ex)
                     {
-                        SetError($"Could not start trace: {ex.Message}");
+                        SetError($"Couldn't start monitoring — {ex.Message}");
                         return;
                     }
                 }
@@ -208,8 +238,8 @@ namespace cyber_behaviour_profiling_2.Pages
 
             StopTempSession();
             SetError(
-                $"Not enough vectors to save ({meaningfulCount}/{AnomalyDetector.MinVectorsRequired}). " +
-                "Run the process a bit longer or generate more activity.");
+                $"Not enough data yet — only {meaningfulCount} of {AnomalyDetector.MinVectorsRequired} vectors captured. " +
+                "Let the process run a bit longer and try again.");
         }
 
         private void RecordTimer_Tick(object? sender, EventArgs e)
@@ -225,7 +255,7 @@ namespace cyber_behaviour_profiling_2.Pages
             if (matchingProfile == null)
             {
 
-                StatusText.Text = $"Waiting for {_targetProcess} to start generating activity...";
+                StatusText.Text = $"Waiting for {_targetProcess} to do something — let it run for a bit...";
                 return;
             }
 
@@ -371,7 +401,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     StartStopBtn.IsEnabled = true;
                     StartStopBtn.Content = "Start Recording";
                     RecordProgress.Visibility = Visibility.Collapsed;
-                    StatusText.Text = "Select a process or browse, then click Start.";
+                    StatusText.Text = "Pick a process from the list, then hit Start Recording.";
                     SetDotColor("#EF4444");
                     _pulseTimer.Stop();
                     _recordTimer.Stop();
@@ -385,7 +415,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     RefreshBtn.IsEnabled = false;
                     StartStopBtn.Content = "Stop";
                     RecordProgress.Visibility = Visibility.Visible;
-                    StatusText.Text = "Starting monitoring traces...";
+                    StatusText.Text = "Getting things ready...";
                     SetDotColor("#F59E0B");
                     _pulseTimer.Start();
                     _recordTimer.Start();
@@ -434,7 +464,7 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             if (_capturedBaseline == null)
             {
-                SetError("No baseline was captured yet.");
+                SetError("Nothing to save yet — record a baseline first.");
                 return;
             }
 
