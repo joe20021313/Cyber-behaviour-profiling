@@ -27,6 +27,8 @@ namespace Cyber_behaviour_profiling
         public int ConsecutiveAnomalousWindows { get; set; }
         public bool HasHighSignalFeatureSpike { get; set; }
         public bool IsBurstDetection { get; set; }
+        public bool TripwireFired { get; set; }
+        public string TripwireReason { get; set; } = "";
 
         public bool BaselineUsed { get; set; }
 
@@ -65,6 +67,19 @@ namespace Cyber_behaviour_profiling
         private const double UserPayloadRateCap    = 5.0;
         private const double SensitiveRateCap      = 0.05;
         private const double UserSensitiveRateCap  = 2.0;
+
+        private const double TripwireWriteRate     = 25.0;
+        private const double TripwireDeleteRate    = 15.0;
+        private const double TripwirePayloadRate   = 8.0;
+        private const double TripwireSensitiveRate = 4.0;
+
+        private static readonly double[] TripwireThresholds =
+        {
+            TripwireWriteRate,
+            TripwireDeleteRate,
+            TripwirePayloadRate,
+            TripwireSensitiveRate
+        };
 
         public static void ConfigureScaleFloors(double[] floors)
         {
@@ -239,9 +254,7 @@ namespace Cyber_behaviour_profiling
 
             var snapshotResult = EvaluateSnapshotStream(profile, baseline);
 
-            var burstResult = baseline != null
-                ? EvaluateBurst(profile, baseline)
-                : new AnomalyResult();
+            var burstResult = EvaluateBurst(profile, baseline);
 
             var result = PickStrongest(snapshotResult, burstResult);
             result.BaselineUsed = baseline != null;
@@ -296,23 +309,16 @@ namespace Cyber_behaviour_profiling
             return latest ?? new AnomalyResult();
         }
 
-        private static AnomalyResult EvaluateBurst(ProcessProfile profile, ProcessBaseline baseline)
+        private static AnomalyResult EvaluateBurst(ProcessProfile profile, ProcessBaseline? baseline)
         {
-            if (baseline.Snapshots.Length < K)
-                return new AnomalyResult();
-
+            var history = CopySanitizedHistory(profile);
             double[] peak = new double[MetricNames.Length];
-            bool hasHistory = false;
+            bool hasHistory = history.Count > 0;
 
-            lock (profile.KnnStateLock)
+            foreach (var snap in history)
             {
-                foreach (var snap in profile.AnomalyHistory)
-                {
-                    if (snap.Length < MetricNames.Length) continue;
-                    hasHistory = true;
-                    for (int d = 0; d < MetricNames.Length; d++)
-                        if (snap[d] > peak[d]) peak[d] = snap[d];
-                }
+                for (int d = 0; d < MetricNames.Length; d++)
+                    if (snap[d] > peak[d]) peak[d] = snap[d];
             }
 
             if (!hasHistory)
@@ -328,7 +334,7 @@ namespace Cyber_behaviour_profiling
                 };
             }
 
-            var result = EvaluateCandidate(peak, new List<double[]>(), baseline);
+            var result = EvaluateCandidate(peak, baseline == null ? history : new List<double[]>(), baseline);
             if (result.AnomalyDetected)
                 result.IsBurstDetection = true;
             return result;
@@ -337,6 +343,20 @@ namespace Cyber_behaviour_profiling
         private static AnomalyResult EvaluateCandidate(
             double[] candidate, List<double[]> sessionHistory, ProcessBaseline? baseline)
         {
+            var result = new AnomalyResult();
+            bool allowTripwire = baseline == null;
+            if (allowTripwire && TryEvaluateTripwire(candidate, out string tripwireReason, out int tripwireMetric,
+                out double tripwireValue, out double tripwireThreshold))
+            {
+                result.AnomalyDetected = true;
+                result.TripwireFired = true;
+                result.TripwireReason = tripwireReason;
+                result.Score = 36;
+                result.HasHighSignalFeatureSpike = tripwireMetric >= 2;
+                result.SpikedMetrics.Add(
+                    $"{MetricNames[tripwireMetric]}: {tripwireValue:F1}/sec (tripwire: {tripwireThreshold:F1}/sec)");
+            }
+
             List<double[]> fullRef;
             if (baseline?.Snapshots is { Length: > 0 })
             {
@@ -366,7 +386,6 @@ namespace Cyber_behaviour_profiling
                 fullRef = sessionHistory;
             }
 
-            var result = new AnomalyResult();
             if (fullRef.Count < K) return result;
 
             var model        = BuildReferenceModel(fullRef);
@@ -383,19 +402,70 @@ namespace Cyber_behaviour_profiling
             if (knnScore <= threshold) return result;
 
             result.AnomalyDetected          = true;
-            result.HasHighSignalFeatureSpike = spiked.Any(i => i >= 2);
+            result.HasHighSignalFeatureSpike = result.HasHighSignalFeatureSpike || spiked.Any(i => i >= 2);
             foreach (int i in spiked)
-                result.SpikedMetrics.Add(
-                    $"{MetricNames[i]}: {candidate[i]:F1}/sec (baseline: {model.Means[i]:F1}/sec)");
+            {
+                string detail =
+                    $"{MetricNames[i]}: {candidate[i]:F1}/sec (baseline: {model.Means[i]:F1}/sec)";
+                if (!result.SpikedMetrics.Any(metric =>
+                        metric.StartsWith($"{MetricNames[i]}:", StringComparison.OrdinalIgnoreCase)))
+                {
+                    result.SpikedMetrics.Add(detail);
+                }
+            }
 
             double novelty = threshold > 0.001
                 ? (knnScore - threshold) / threshold
                 : knnScore;
-            result.Score = Math.Clamp(
+            int knnScoreValue = Math.Clamp(
                 15 + (int)Math.Round(Math.Max(0.0, novelty) * 18.0) + spiked.Count * 4,
                 15, 45);
+            result.Score = Math.Max(result.Score, knnScoreValue);
 
             return result;
+        }
+
+        private static bool TryEvaluateTripwire(
+            IReadOnlyList<double> candidate,
+            out string reason,
+            out int metricIndex,
+            out double metricValue,
+            out double threshold)
+        {
+            reason = "";
+            metricIndex = -1;
+            metricValue = 0.0;
+            threshold = 0.0;
+
+            int dims = Math.Min(candidate.Count, Math.Min(MetricNames.Length, TripwireThresholds.Length));
+            double strongestRatio = 1.0;
+
+            for (int i = 0; i < dims; i++)
+            {
+                double currentThreshold = TripwireThresholds[i];
+                if (currentThreshold <= 0.0)
+                    continue;
+
+                double value = candidate[i];
+                if (value < currentThreshold)
+                    continue;
+
+                double ratio = value / currentThreshold;
+                if (metricIndex == -1 || ratio > strongestRatio)
+                {
+                    metricIndex = i;
+                    metricValue = value;
+                    threshold = currentThreshold;
+                    strongestRatio = ratio;
+                }
+            }
+
+            if (metricIndex == -1)
+                return false;
+
+            reason =
+                $"{MetricNames[metricIndex]} {metricValue:F1}/sec exceeded tripwire {threshold:F1}/sec";
+            return true;
         }
 
         private static AnomalyResult PickStrongest(AnomalyResult a, AnomalyResult b)

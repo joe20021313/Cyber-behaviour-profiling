@@ -272,8 +272,11 @@ namespace Cyber_behaviour_profiling
             {
                 string metrics  = anomaly.SpikedMetrics.Count > 0
                     ? string.Join(", ", anomaly.SpikedMetrics)
-                    : "file activity deviated from the session baseline";
+                    : (!string.IsNullOrWhiteSpace(anomaly.TripwireReason)
+                        ? anomaly.TripwireReason
+                        : "file activity deviated from the session baseline");
                 string burstTag = anomaly.IsBurstDetection ? " [burst-mode]" : "";
+                string tripwireTag = anomaly.TripwireFired ? " [tripwire]" : "";
                 AnomalyConfidenceTier anomalyTier = GetAnomalyConfidenceTier(anomaly);
                 ThreatImpact knnImpact = ComputeIndependentKnnImpact(anomaly, anomalyTier);
 
@@ -312,7 +315,7 @@ namespace Cyber_behaviour_profiling
                     }
 
                     report.DecisionReasons.Add(
-                        $"  [{labelText}] Anomaly detector (KNN){burstTag}{baselineTag}: {messageBody}.{statsText}{focusNote}");
+                        $"  [{labelText}] Anomaly detector (KNN){burstTag}{tripwireTag}{baselineTag}: {messageBody}.{statsText}{focusNote}");
 
                     if (knnImpact > highestImpact) highestImpact = knnImpact;
                     firedCount++;
@@ -330,10 +333,23 @@ namespace Cyber_behaviour_profiling
                         var snapshots = profile.AnomalyHistory.ToList();
                         double peakWrite  = snapshots.Max(s => s.Length > 0 ? s[0] : 0);
                         double peakDelete = snapshots.Max(s => s.Length > 1 ? s[1] : 0);
+                        double peakPayload = snapshots.Max(s => s.Length > 2 ? s[2] : 0);
+                        double peakSensitive = snapshots.Max(s => s.Length > 3 ? s[3] : 0);
                         double avgWrite   = snapshots.Average(s => s.Length > 0 ? s[0] : 0);
 
-                        if (peakWrite > 0 || peakDelete > 0)
-                            metricsDisplay = $"Peak Writes: {peakWrite:F1}/s, Avg: {avgWrite:F1}/s, Peak Deletes: {peakDelete:F1}/s ({snapshots.Count} samples)";
+                        if (peakWrite > 0 || peakDelete > 0 || peakPayload > 0 || peakSensitive > 0)
+                        {
+                            if (peakWrite > 0 || peakDelete > 0)
+                            {
+                                metricsDisplay =
+                                    $"Peak Writes: {peakWrite:F1}/s, Avg: {avgWrite:F1}/s, Peak Deletes: {peakDelete:F1}/s, Peak Payload Writes: {peakPayload:F1}/s, Peak Sensitive Access: {peakSensitive:F1}/s ({snapshots.Count} samples)";
+                            }
+                            else
+                            {
+                                metricsDisplay =
+                                    $"No write/delete bursts in {snapshots.Count} samples; peak payload writes {peakPayload:F1}/s, peak sensitive access {peakSensitive:F1}/s";
+                            }
+                        }
                         else
                             metricsDisplay = $"No file writes in {snapshots.Count} samples (read-only activity)";
                     }
@@ -413,7 +429,7 @@ namespace Cyber_behaviour_profiling
                     chainResult.HasHardIndicator = true;
             }
 
-            if (!chainResult.HasHardIndicator && !hasBehavioralRedFlag && trustMult <= 0.6)
+            if (!anomaly.TripwireFired && !chainResult.HasHardIndicator && !hasBehavioralRedFlag && trustMult <= 0.6)
             {
                 if (highestImpact == ThreatImpact.Malicious)
                 {
@@ -522,6 +538,9 @@ namespace Cyber_behaviour_profiling
             if (!anomaly.AnomalyDetected)
                 return ThreatImpact.Safe;
 
+            if (anomaly.TripwireFired)
+                return ThreatImpact.Suspicious;
+
             if (!anomaly.BaselineUsed)
             {
                 return tier switch
@@ -545,10 +564,7 @@ namespace Cyber_behaviour_profiling
         {
             _ = profile;
 
-            if (!anomaly.BaselineUsed)
-                return false;
-
-            if (HasHardHighRiskEvents(events))
+            if (HasHardHighRiskEvents(events) && (anomaly.BaselineUsed || anomaly.TripwireFired))
                 return true;
 
             return false;

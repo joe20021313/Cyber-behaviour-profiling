@@ -68,16 +68,17 @@ public class KnnDetectorTests
             var profile = BuildProfile(
                 "knntest.exe",
                 2_120_000_002,
-                new[] { 18.0, 6.0, 0.0, 4.0 },
-                new[] { 16.0, 5.0, 0.0, 3.0 },
-                new[] { 19.0, 6.0, 1.0, 4.0 },
-                new[] { 17.0, 5.0, 0.0, 4.0 },
-                new[] { 20.0, 6.0, 1.0, 5.0 });
+                new[] { 18.0, 6.0, 0.0, 3.0 },
+                new[] { 16.0, 5.0, 0.0, 2.0 },
+                new[] { 19.0, 6.0, 1.0, 3.0 },
+                new[] { 17.0, 5.0, 0.0, 2.0 },
+                new[] { 20.0, 6.0, 1.0, 3.0 });
 
             var result = AnomalyDetector.Evaluate(profile, new ProcessContext());
 
             Assert.True(result.BaselineUsed);
-            Assert.False(result.AnomalyDetected);
+            Assert.False(result.AnomalyDetected,
+                $"Unexpected anomaly. Tripwire={result.TripwireFired}, Score={result.Score}, Dist={result.KnnDistance:F3}, Th={result.Threshold:F3}, Metrics={string.Join(" | ", result.SpikedMetrics)}");
         }
         finally
         {
@@ -154,5 +155,25 @@ public class KnnDetectorTests
         var result = AnomalyDetector.Evaluate(profile, new ProcessContext());
 
         Assert.True(result.AnomalyDetected);
+    }
+
+    [Fact]
+    public void NoBaseline_ShortSensitiveBurst_TripwireDetectsAnomaly()
+    {
+        AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
+
+        var profile = ProfileFactory.Empty("lazagne.exe", 2_120_000_005);
+        profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 9.0 });
+        profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 0.0 });
+        profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 0.0 });
+
+        var result = AnomalyDetector.Evaluate(profile, new ProcessContext());
+
+        Assert.True(result.AnomalyDetected);
+        Assert.False(result.BaselineUsed);
+        Assert.True(result.TripwireFired);
+        Assert.Contains("tripwire", result.TripwireReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(result.SpikedMetrics, m =>
+            m.Contains("Sensitive Access Rate", StringComparison.OrdinalIgnoreCase));
     }
 }

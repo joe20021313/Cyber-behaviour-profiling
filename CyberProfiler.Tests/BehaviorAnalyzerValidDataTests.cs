@@ -140,4 +140,59 @@ public class BehaviorAnalyzerValidDataTests
             AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
         }
     }
+
+    [Fact]
+    public void NoBaselineSensitiveTripwire_DefaultsToSuspicious()
+    {
+        AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
+
+        try
+        {
+            var profile = ProfileFactory.Empty("lazagne.exe", 2_100_000_007);
+            profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 10.0 });
+            profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 0.0 });
+            profile.AnomalyHistory.Add(new[] { 0.0, 0.0, 0.0, 0.0 });
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.NotNull(report.Anomaly);
+            Assert.True(report.Anomaly!.TripwireFired);
+            Assert.Equal(ThreatImpact.Suspicious, report.FinalVerdict);
+            Assert.Contains(report.DecisionReasons, reason =>
+                reason.Contains("tripwire", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
+        }
+    }
+
+    [Fact]
+    public void NoBaselineTripwireWithHardHighRiskEvents_EscalatesToMalicious()
+    {
+        var anomaly = new AnomalyResult
+        {
+            AnomalyDetected = true,
+            BaselineUsed = false,
+            TripwireFired = true,
+            TripwireReason = "Sensitive Access Rate 10.0/sec exceeded tripwire 4.0/sec",
+            Score = 36
+        };
+
+        var events = new List<SuspiciousEvent>
+        {
+            ProfileFactory.Event(
+                "DPAPI_Decrypt",
+                "dpapi",
+                "CryptUnprotectData",
+                "credential_file_access")
+        };
+
+        var impact = BehaviorAnalyzer.DetermineAnomalyImpact(
+            anomaly,
+            events,
+            ProfileFactory.Empty("lazagne.exe", 2_100_000_008));
+
+        Assert.Equal(ThreatImpact.Malicious, impact);
+    }
 }
