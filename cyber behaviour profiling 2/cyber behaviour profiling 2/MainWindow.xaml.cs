@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using Cyber_behaviour_profiling;
 using Wpf.Ui.Controls;
 
 namespace cyber_behaviour_profiling_2
@@ -10,6 +11,8 @@ namespace cyber_behaviour_profiling_2
         public MainWindow()
         {
             InitializeComponent();
+            string dataPath = System.IO.Path.Combine(AppContext.BaseDirectory, "data.json");
+            MapToData.LoadBaselines(MapToData.ResolveBaselinePath(dataPath));
             MainFrame.Navigate(new Pages.DetectionPage());
         }
 
@@ -42,6 +45,9 @@ namespace cyber_behaviour_profiling_2
             {
                 case "Dashboard":
                     MainFrame.Navigate(new Pages.DetectionPage());
+                    break;
+                case "Baselines":
+                    MainFrame.Navigate(new Pages.BaselinesPage());
                     break;
                 case "Reports":
                     MainFrame.Navigate(new Pages.ReportsPage());

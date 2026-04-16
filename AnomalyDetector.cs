@@ -1,9 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace Cyber_behaviour_profiling
 {
+    public class ProcessBaseline
+    {
+        public double[][] Snapshots { get; set; } = Array.Empty<double[]>();
+        public string Source { get; set; } = "builtin";
+        public string? RecordedAt { get; set; }
+    }
+
+    public class BaselineStore
+    {
+        public Dictionary<string, ProcessBaseline> Baselines { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     public class AnomalyResult
     {
         public bool AnomalyDetected { get; set; }
@@ -13,16 +26,21 @@ namespace Cyber_behaviour_profiling
         public int Score { get; set; }
         public int ConsecutiveAnomalousWindows { get; set; }
         public bool HasHighSignalFeatureSpike { get; set; }
+        public bool IsBurstDetection { get; set; }
+
+        public bool BaselineUsed { get; set; }
 
         public bool IsSustained => ConsecutiveAnomalousWindows >= 2;
     }
 
     public static class AnomalyDetector
     {
-        private const int K = 3;
-        private const int MinSamples = 4;
-        private const double ZThreshold = 2.5;
-        private const double DistanceFloor = 0.5;
+        private const int K          = 5;
+        private const int Knear      = 2;
+        private const int MinSamples = 2;
+
+        private static double _zThreshold    = 2.5;
+        private static double _distanceFloor = 0.5;
 
         private static readonly string[] MetricNames =
         {
@@ -32,164 +50,415 @@ namespace Cyber_behaviour_profiling
             "Sensitive Access Rate"
         };
 
-        private static readonly double[] MetricScaleFloors = { 3.0, 1.5, 0.15, 0.3 };
+        private static double[] _metricScaleFloors = { 0.1, 0.05, 0.02, 0.05 };
+
+        private static Dictionary<string, ProcessBaseline> _baselines =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        private static int _maxBaselineSnapshots = 50;
+
+        public static int MaxSnapshots => _maxBaselineSnapshots;
+
+        public static int MinVectorsRequired => K + 1;
+
+        private const double PayloadRateCap        = 0.1;
+        private const double UserPayloadRateCap    = 5.0;
+        private const double SensitiveRateCap      = 0.05;
+        private const double UserSensitiveRateCap  = 2.0;
+
+        public static void ConfigureScaleFloors(double[] floors)
+        {
+            if (floors.Length >= MetricNames.Length)
+                _metricScaleFloors = floors.Take(MetricNames.Length).ToArray();
+        }
+
+        public static void ConfigureMaxSnapshots(int maxSnapshots)
+        {
+            _maxBaselineSnapshots = Math.Max(maxSnapshots, MinVectorsRequired);
+        }
+
+        public static void ConfigureDetector(double zThreshold, double distanceFloor)
+        {
+            if (zThreshold    > 0) _zThreshold    = zThreshold;
+            if (distanceFloor > 0) _distanceFloor = distanceFloor;
+        }
 
         private sealed class ReferenceModel
         {
-            public double[] Means { get; set; } = Array.Empty<double>();
+            public double[] Means  { get; set; } = Array.Empty<double>();
             public double[] Scales { get; set; } = Array.Empty<double>();
+        }
+
+        public static void LoadBaselines(Dictionary<string, ProcessBaseline> baselines)
+        {
+            var sanitized = new Dictionary<string, ProcessBaseline>(StringComparer.OrdinalIgnoreCase);
+
+            if (baselines == null)
+            {
+                _baselines = sanitized;
+                return;
+            }
+
+            foreach (var entry in baselines)
+            {
+                string key = Path.GetFileNameWithoutExtension(entry.Key ?? string.Empty).ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+
+                ProcessBaseline baseline = entry.Value ?? new ProcessBaseline();
+                var snapshots = (baseline.Snapshots ?? Array.Empty<double[]>())
+                    .Where(s => s != null && s.Length >= MetricNames.Length)
+                    .Select(s => s.Take(MetricNames.Length).ToArray())
+                    .ToList();
+
+                if (snapshots.Count > _maxBaselineSnapshots)
+                    snapshots = snapshots[^_maxBaselineSnapshots..];
+
+                if (snapshots.Count < MinVectorsRequired)
+                {
+                    InvestigationLog.Write(
+                        $"Skipping baseline '{key}': requires at least {MinVectorsRequired} snapshots, found {snapshots.Count}.");
+                    continue;
+                }
+
+                double payloadCap = baseline.Source == "user" ? UserPayloadRateCap : PayloadRateCap;
+                double sensitiveCap = baseline.Source == "user" ? UserSensitiveRateCap : SensitiveRateCap;
+
+                foreach (var snap in snapshots)
+                {
+                    snap[2] = Math.Min(snap[2], payloadCap);
+                    snap[3] = Math.Min(snap[3], sensitiveCap);
+                }
+
+                var zeroOnlyMetrics = Enumerable.Range(0, MetricNames.Length)
+                    .Where(d => snapshots.All(s => s[d] <= 0.0))
+                    .Select(d => MetricNames[d])
+                    .ToList();
+
+                if (zeroOnlyMetrics.Count > 0)
+                {
+                    InvestigationLog.Write(
+                        $"Baseline '{key}' has zero-only metric dimensions: {string.Join(", ", zeroOnlyMetrics)}.");
+                }
+
+                sanitized[key] = new ProcessBaseline
+                {
+                    Source = string.IsNullOrWhiteSpace(baseline.Source) ? "builtin" : baseline.Source,
+                    RecordedAt = baseline.RecordedAt,
+                    Snapshots = snapshots.Select(s => (double[])s.Clone()).ToArray()
+                };
+            }
+
+            _baselines = sanitized;
+        }
+
+        public static ProcessBaseline? GetBaseline(string processName)
+        {
+            string key = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+            return _baselines.TryGetValue(key, out var b) ? b : null;
+        }
+
+        public static IReadOnlyDictionary<string, ProcessBaseline> AllBaselines => _baselines;
+
+        public static ProcessBaseline? CaptureBaseline(ProcessProfile profile)
+            => CaptureBaseline(profile, startIndex: 0, meaningfulOnly: false);
+
+        public static ProcessBaseline? CaptureBaseline(
+            ProcessProfile profile,
+            int startIndex,
+            bool meaningfulOnly)
+        {
+            var history = CopySanitizedHistory(profile);
+
+            if (startIndex > 0)
+            {
+                if (startIndex >= history.Count)
+                    history = new List<double[]>();
+                else
+                    history = history.Skip(startIndex).ToList();
+            }
+
+            if (meaningfulOnly)
+                history = history.Where(IsMeaningfulSnapshot).ToList();
+
+            if (history.Count < MinVectorsRequired)
+                return null;
+
+            var snapshots = history.Count > _maxBaselineSnapshots
+                ? history.GetRange(history.Count - _maxBaselineSnapshots, _maxBaselineSnapshots)
+                : history;
+
+            return new ProcessBaseline
+            {
+                Snapshots = snapshots.Select(s => (double[])s.Clone()).ToArray(),
+                Source    = "user"
+            };
+        }
+
+        public static int CountMeaningfulSnapshots(ProcessProfile profile, int startIndex = 0)
+        {
+            var history = CopySanitizedHistory(profile);
+            if (startIndex > 0)
+            {
+                if (startIndex >= history.Count)
+                    return 0;
+                history = history.Skip(startIndex).ToList();
+            }
+
+            return history.Count(IsMeaningfulSnapshot);
+        }
+
+        private static bool IsMeaningfulSnapshot(double[] snapshot)
+        {
+            if (snapshot.Length < MetricNames.Length)
+                return false;
+
+            for (int i = 0; i < MetricNames.Length; i++)
+                if (snapshot[i] > 0.0)
+                    return true;
+
+            return false;
         }
 
         private static List<double[]> CopySanitizedHistory(ProcessProfile profile)
         {
             lock (profile.KnnStateLock)
             {
-                var history = new List<double[]>();
-                foreach (var snapshot in profile.AnomalyHistory)
-                {
-                    if (snapshot.Length == MetricNames.Length)
-                        history.Add((double[])snapshot.Clone());
-                }
-                return history;
+                var result = new List<double[]>(profile.AnomalyHistory.Count);
+                foreach (var snap in profile.AnomalyHistory)
+                    if (snap.Length == MetricNames.Length)
+                        result.Add((double[])snap.Clone());
+                return result;
             }
         }
 
         public static AnomalyResult Evaluate(ProcessProfile profile, ProcessContext ctx)
         {
-            _ = ctx;
-            var history = CopySanitizedHistory(profile);
+            string key = Path.GetFileNameWithoutExtension(profile.ProcessName ?? "").ToLowerInvariant();
+            ProcessBaseline? baseline = GetBaseline(key);
 
-            if (history.Count < MinSamples)
-                return new AnomalyResult();
+            var snapshotResult = EvaluateSnapshotStream(profile, baseline);
 
-            return EvaluateStrongest(history);
+            var burstResult = baseline != null
+                ? EvaluateBurst(profile, baseline)
+                : new AnomalyResult();
+
+            var result = PickStrongest(snapshotResult, burstResult);
+            result.BaselineUsed = baseline != null;
+            return result;
         }
 
-        private static AnomalyResult EvaluateStrongest(List<double[]> history)
+        private static AnomalyResult EvaluateSnapshotStream(ProcessProfile profile, ProcessBaseline? baseline)
         {
-            var strongestAnomaly = new AnomalyResult();
-            AnomalyResult? latestEvaluation = null;
+            var history = CopySanitizedHistory(profile);
+            return history.Count < MinSamples
+                ? new AnomalyResult()
+                : EvaluateStrongest(history, baseline);
+        }
 
-            for (int candidateIndex = MinSamples - 1; candidateIndex < history.Count; candidateIndex++)
+        private static AnomalyResult EvaluateStrongest(List<double[]> history, ProcessBaseline? baseline)
+        {
+            var strongest = new AnomalyResult();
+            AnomalyResult? latest = null;
+
+            for (int ci = MinSamples - 1; ci < history.Count; ci++)
             {
-                var candidate = history[candidateIndex];
-                var reference = history.Take(candidateIndex).ToList();
-                var evaluation = EvaluateCandidate(candidate, reference);
+                var candidate  = history[ci];
+                var reference  = history.Take(ci).ToList();
+                var evaluation = EvaluateCandidate(candidate, reference, baseline);
 
-                latestEvaluation = evaluation;
-                if (!evaluation.AnomalyDetected)
-                    continue;
+                latest = evaluation;
+                if (!evaluation.AnomalyDetected) continue;
 
-                if (!strongestAnomaly.AnomalyDetected ||
-                    evaluation.Score > strongestAnomaly.Score ||
-                    (evaluation.Score == strongestAnomaly.Score && evaluation.KnnDistance > strongestAnomaly.KnnDistance))
+                if (!strongest.AnomalyDetected ||
+                    evaluation.Score > strongest.Score ||
+                    (evaluation.Score == strongest.Score &&
+                     evaluation.KnnDistance > strongest.KnnDistance))
                 {
-                    strongestAnomaly = evaluation;
+                    strongest = evaluation;
                 }
             }
 
-            if (strongestAnomaly.AnomalyDetected)
+            if (strongest.AnomalyDetected)
             {
                 int streak = 0;
                 for (int i = history.Count - 1; i >= MinSamples - 1; i--)
                 {
                     var reference = history.Take(i).ToList();
                     if (reference.Count < K) break;
-                    var eval = EvaluateCandidate(history[i], reference);
-                    if (!eval.AnomalyDetected) break;
+                    if (!EvaluateCandidate(history[i], reference, baseline).AnomalyDetected) break;
                     streak++;
                 }
-                strongestAnomaly.ConsecutiveAnomalousWindows = streak;
-                return strongestAnomaly;
+                strongest.ConsecutiveAnomalousWindows = streak;
+                return strongest;
             }
 
-            return latestEvaluation ?? new AnomalyResult();
+            return latest ?? new AnomalyResult();
         }
 
-        private static AnomalyResult EvaluateCandidate(double[] candidate, List<double[]> reference)
+        private static AnomalyResult EvaluateBurst(ProcessProfile profile, ProcessBaseline baseline)
         {
+            if (baseline.Snapshots.Length < K)
+                return new AnomalyResult();
+
+            double[] peak = new double[MetricNames.Length];
+            bool hasHistory = false;
+
+            lock (profile.KnnStateLock)
+            {
+                foreach (var snap in profile.AnomalyHistory)
+                {
+                    if (snap.Length < MetricNames.Length) continue;
+                    hasHistory = true;
+                    for (int d = 0; d < MetricNames.Length; d++)
+                        if (snap[d] > peak[d]) peak[d] = snap[d];
+                }
+            }
+
+            if (!hasHistory)
+            {
+
+                double elapsed = Math.Max(0.5, (DateTime.Now - profile.FirstSeen).TotalSeconds);
+                peak = new[]
+                {
+                    profile.TotalFilteredWrites        / elapsed,
+                    profile.TotalFilteredDeletes       / elapsed,
+                    profile.TotalPayloadLikeWrites     / elapsed,
+                    profile.TotalSensitiveAccessEvents / elapsed
+                };
+            }
+
+            var result = EvaluateCandidate(peak, new List<double[]>(), baseline);
+            if (result.AnomalyDetected)
+                result.IsBurstDetection = true;
+            return result;
+        }
+
+        private static AnomalyResult EvaluateCandidate(
+            double[] candidate, List<double[]> sessionHistory, ProcessBaseline? baseline)
+        {
+            List<double[]> fullRef;
+            if (baseline?.Snapshots is { Length: > 0 })
+            {
+                fullRef = new List<double[]>(baseline.Snapshots.Length);
+                foreach (var s in baseline.Snapshots)
+                    if (s.Length == MetricNames.Length) fullRef.Add(s);
+
+                if (baseline.Source != "user")
+                {
+                    double payloadCap   = PayloadRateCap;
+                    double sensitiveCap = SensitiveRateCap;
+                    if (candidate.Length > 2 && candidate[2] > payloadCap)
+                    {
+                        candidate = (double[])candidate.Clone();
+                        candidate[2] = payloadCap;
+                        if (candidate.Length > 3) candidate[3] = Math.Min(candidate[3], sensitiveCap);
+                    }
+                    else if (candidate.Length > 3 && candidate[3] > sensitiveCap)
+                    {
+                        candidate = (double[])candidate.Clone();
+                        candidate[3] = sensitiveCap;
+                    }
+                }
+            }
+            else
+            {
+                fullRef = sessionHistory;
+            }
+
             var result = new AnomalyResult();
-            if (reference.Count < K)
-                return result;
+            if (fullRef.Count < K) return result;
 
-            var model = BuildReferenceModel(reference);
-            var referenceScores = ComputeReferenceScores(reference, model);
-            double meanScore = referenceScores.Count > 0 ? referenceScores.Average() : 0.0;
-            double stdScore = StandardDeviation(referenceScores, meanScore);
-            double threshold = meanScore + ZThreshold * Math.Max(stdScore, DistanceFloor);
-
-            double knnScore = ComputeKnnDistance(candidate, reference, model);
+            var model        = BuildReferenceModel(fullRef);
+            var refScores    = ComputeReferenceScores(fullRef, model);
+            double meanScore = refScores.Count > 0 ? refScores.Average() : 0.0;
+            double stdScore  = StandardDeviation(refScores, meanScore);
+            double threshold = meanScore + _zThreshold * Math.Max(stdScore, _distanceFloor);
+            double knnScore  = ComputeKnnDistance(candidate, fullRef, model);
 
             result.KnnDistance = knnScore;
-            result.Threshold = threshold;
+            result.Threshold   = threshold;
 
-            var spikedMetrics = GetSpikedMetricIndexes(candidate, model).ToList();
-            if (knnScore <= threshold || spikedMetrics.Count == 0)
-                return result;
+            var spiked = GetSpikedMetricIndexes(candidate, fullRef, model).ToList();
+            if (knnScore <= threshold) return result;
 
-            result.AnomalyDetected = true;
-            result.HasHighSignalFeatureSpike = spikedMetrics.Any(i => i >= 2);
-            foreach (int i in spikedMetrics)
-                result.SpikedMetrics.Add($"{MetricNames[i]}: {candidate[i]:F1}/sec (baseline: {model.Means[i]:F1}/sec)");
+            result.AnomalyDetected          = true;
+            result.HasHighSignalFeatureSpike = spiked.Any(i => i >= 2);
+            foreach (int i in spiked)
+                result.SpikedMetrics.Add(
+                    $"{MetricNames[i]}: {candidate[i]:F1}/sec (baseline: {model.Means[i]:F1}/sec)");
 
-            double noveltyRatio = threshold > 0.001 ? (knnScore - threshold) / threshold : knnScore;
-            result.Score = Math.Clamp(15 + (int)Math.Round(Math.Max(0.0, noveltyRatio) * 18.0) + (spikedMetrics.Count * 4), 15, 45);
+            double novelty = threshold > 0.001
+                ? (knnScore - threshold) / threshold
+                : knnScore;
+            result.Score = Math.Clamp(
+                15 + (int)Math.Round(Math.Max(0.0, novelty) * 18.0) + spiked.Count * 4,
+                15, 45);
 
             return result;
         }
 
+        private static AnomalyResult PickStrongest(AnomalyResult a, AnomalyResult b)
+        {
+            if (a.AnomalyDetected && b.AnomalyDetected)
+                return a.Score >= b.Score ? a : b;
+            if (a.AnomalyDetected) return a;
+            if (b.AnomalyDetected) return b;
+
+            return a.KnnDistance >= b.KnnDistance ? a : b;
+        }
+
         private static ReferenceModel BuildReferenceModel(List<double[]> reference)
         {
-            int dims = MetricNames.Length;
-            var means = new double[dims];
+            int dims   = MetricNames.Length;
+            var means  = new double[dims];
             var scales = new double[dims];
 
             for (int d = 0; d < dims; d++)
             {
-                var values = reference.Select(snapshot => snapshot[d]).ToList();
-                double mean = values.Count > 0 ? values.Average() : 0.0;
-                double std = StandardDeviation(values, mean);
-
-                means[d] = mean;
-                scales[d] = Math.Max(std, MetricScaleFloors[d]);
+                var values = reference.Select(s => s[d]).ToList();
+                double mean = values.Average();
+                double std  = StandardDeviation(values, mean);
+                means[d]  = mean;
+                scales[d] = Math.Max(std, _metricScaleFloors[d]);
             }
-
             return new ReferenceModel { Means = means, Scales = scales };
         }
 
         private static List<double> ComputeReferenceScores(List<double[]> reference, ReferenceModel model)
         {
-            var scores = new List<double>();
+            var scores = new List<double>(reference.Count);
             for (int i = 0; i < reference.Count; i++)
             {
-                var distances = new List<double>();
+                var dists = new List<double>(reference.Count - 1);
                 for (int j = 0; j < reference.Count; j++)
-                {
-                    if (i != j)
-                        distances.Add(ScaledDistance(reference[i], reference[j], model.Scales));
-                }
-
-                distances.Sort();
-                if (distances.Count > 0)
-                    scores.Add(distances.Take(K).Average());
+                    if (i != j) dists.Add(ScaledDistance(reference[i], reference[j], model.Scales));
+                dists.Sort();
+                if (dists.Count > 0) scores.Add(dists.Take(Knear).Average());
             }
             return scores;
         }
 
         private static double ComputeKnnDistance(double[] candidate, List<double[]> reference, ReferenceModel model)
         {
-            var distances = reference.Select(s => ScaledDistance(candidate, s, model.Scales)).ToList();
-            distances.Sort();
-            return distances.Take(K).Average();
+            var dists = reference.Select(s => ScaledDistance(candidate, s, model.Scales)).ToList();
+            dists.Sort();
+            return dists.Take(Knear).Average();
         }
 
-        private static IEnumerable<int> GetSpikedMetricIndexes(double[] snapshot, ReferenceModel model)
+        private static IEnumerable<int> GetSpikedMetricIndexes(
+            double[] candidate, List<double[]> reference, ReferenceModel model)
         {
-            int dims = Math.Min(snapshot.Length, MetricNames.Length);
+            var nearest = reference
+                .OrderBy(s => ScaledDistance(candidate, s, model.Scales))
+                .Take(Knear)
+                .ToList();
+
+            int dims = Math.Min(candidate.Length, MetricNames.Length);
             for (int d = 0; d < dims; d++)
             {
-                double threshold = model.Means[d] + model.Scales[d];
-                if (snapshot[d] > threshold)
+                double localMax = nearest.Count > 0 ? nearest.Max(s => s[d]) : model.Means[d];
+                if (candidate[d] > localMax + 2.0 * model.Scales[d])
                     yield return d;
             }
         }
@@ -197,22 +466,24 @@ namespace Cyber_behaviour_profiling
         private static double ScaledDistance(double[] a, double[] b, double[] scales)
         {
             double sum = 0.0;
-            int length = Math.Min(a.Length, b.Length);
-            for (int i = 0; i < length; i++)
+            int len    = Math.Min(a.Length, b.Length);
+            for (int i = 0; i < len; i++)
             {
-                double scale = i < scales.Length ? Math.Max(scales[i], MetricScaleFloors[i]) : DistanceFloor;
+                double scale = i < scales.Length
+                    ? scales[i]
+                    : _distanceFloor;
+                if (scale <= 0.0)
+                    scale = _distanceFloor;
                 double diff = (a[i] - b[i]) / scale;
                 sum += diff * diff;
             }
-
             return Math.Sqrt(sum);
         }
 
         private static double StandardDeviation(List<double> values, double mean)
         {
             if (values.Count <= 1) return 0.0;
-            double variance = values.Average(v => (v - mean) * (v - mean));
-            return Math.Sqrt(variance);
+            return Math.Sqrt(values.Average(v => (v - mean) * (v - mean)));
         }
     }
 }

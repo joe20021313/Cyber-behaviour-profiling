@@ -75,7 +75,8 @@ namespace Cyber_behaviour_profiling
         LsassMemoryAccess,
         RemoteThreadInjection,
         ProcessTamperingDetected,
-        ReconnaissanceToolSpawning
+        ReconnaissanceToolSpawning,
+        PotentialCredentialStaging
     }
 
     public class ChainConfirmationResult
@@ -102,7 +103,7 @@ namespace Cyber_behaviour_profiling
         public InvestigationResult? NetworkInvestigation { get; set; }
     }
 
-    public class ProcessContext // filled by GatherSystemContext()
+    public class ProcessContext
     {
         public string FilePath { get; set; } = "UNKNOWN";
         public bool HasSignature { get; set; } = false;
@@ -149,7 +150,14 @@ namespace Cyber_behaviour_profiling
             public string Source { get; set; } = "";
         }
 
-        // P/Invoke declarations for process token inspection.
+        internal enum AnomalyConfidenceTier
+        {
+            Low = 0,
+            Moderate = 1,
+            High = 2,
+            Extreme = 3
+        }
+
         [DllImport("advapi32.dll", SetLastError = true)]
         private static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
 
@@ -262,40 +270,84 @@ namespace Cyber_behaviour_profiling
 
             if (anomaly.AnomalyDetected)
             {
-                ThreatImpact anomalyImpact = DetermineAnomalyImpact(
-                    anomaly,
-                    events,
-                    profile,
-                    hasBehavioralRedFlag,
-                    chainResult.HasHardIndicator);
-
-                string metrics = anomaly.SpikedMetrics.Count > 0
+                string metrics  = anomaly.SpikedMetrics.Count > 0
                     ? string.Join(", ", anomaly.SpikedMetrics)
-                    : "file activity deviated from the recent baseline";
-                if (grantsTrustedLeeway && anomalyImpact == ThreatImpact.Suspicious)
+                    : "file activity deviated from the session baseline";
+                string burstTag = anomaly.IsBurstDetection ? " [burst-mode]" : "";
+                AnomalyConfidenceTier anomalyTier = GetAnomalyConfidenceTier(anomaly);
+                ThreatImpact knnImpact = ComputeIndependentKnnImpact(anomaly, anomalyTier);
+
+                if (!anomaly.BaselineUsed &&
+                    knnImpact == ThreatImpact.Inconclusive &&
+                    (firedCount > 0 || HasAnomalyCorroboration(events)))
                 {
-                    anomalyImpact = ThreatImpact.Inconclusive;
-                    report.DecisionReasons.Add(
-                        $"  [{ToImpactLabel(anomalyImpact)}] Anomaly detector (KNN): unusual file activity — {metrics} — process is from a verified publisher, so severity has been reduced.");
+                    knnImpact = ThreatImpact.Suspicious;
                 }
 
-                if (!chainResult.HasHardIndicator && !hasBehavioralRedFlag && anomalyImpact == ThreatImpact.Inconclusive)
+                if (knnImpact != ThreatImpact.Safe)
                 {
-                    // suppressed — not enough corroboration to surface this
+                    string focusNote = knnImpact == ThreatImpact.Suspicious &&
+                                       CountTopWriteDirectories(profile) == 1
+                        ? " Activity was concentrated in one location."
+                        : "";
+                    string statsText = $" KNN distance {anomaly.KnnDistance:F2} vs threshold {anomaly.Threshold:F2}.";
+
+                    string labelText;
+                    string baselineTag;
+                    string messageBody;
+
+                    if (!anomaly.BaselineUsed)
+                    {
+                        labelText   = knnImpact == ThreatImpact.Suspicious
+                            ? ToImpactLabel(ThreatImpact.Suspicious)
+                            : "NOTICE";
+                        baselineTag = " [no baseline — self-referential]";
+                        messageBody = $"self-referential behavioural deviation — {metrics}";
+                    }
+                    else
+                    {
+                        labelText   = ToImpactLabel(knnImpact);
+                        baselineTag = " [baseline]";
+                        messageBody = $"baseline deviation — {metrics}";
+                    }
+
+                    report.DecisionReasons.Add(
+                        $"  [{labelText}] Anomaly detector (KNN){burstTag}{baselineTag}: {messageBody}.{statsText}{focusNote}");
+
+                    if (knnImpact > highestImpact) highestImpact = knnImpact;
+                    firedCount++;
                 }
-                else if (anomalyImpact == ThreatImpact.Safe)
+            }
+            else
+            {
+                string metricsDisplay = "No activity recorded";
+                int snapshotCount = 0;
+                lock (profile.KnnStateLock)
                 {
-                    // suppressed — modelled as benign high-volume or startup activity
+                    snapshotCount = profile.AnomalyHistory.Count;
+                    if (profile.AnomalyHistory.Count > 0)
+                    {
+                        var snapshots = profile.AnomalyHistory.ToList();
+                        double peakWrite  = snapshots.Max(s => s.Length > 0 ? s[0] : 0);
+                        double peakDelete = snapshots.Max(s => s.Length > 1 ? s[1] : 0);
+                        double avgWrite   = snapshots.Average(s => s.Length > 0 ? s[0] : 0);
+
+                        if (peakWrite > 0 || peakDelete > 0)
+                            metricsDisplay = $"Peak Writes: {peakWrite:F1}/s, Avg: {avgWrite:F1}/s, Peak Deletes: {peakDelete:F1}/s ({snapshots.Count} samples)";
+                        else
+                            metricsDisplay = $"No file writes in {snapshots.Count} samples (read-only activity)";
+                    }
+                }
+
+                if (!anomaly.BaselineUsed && snapshotCount < AnomalyDetector.MinVectorsRequired)
+                {
+                    report.DecisionReasons.Add(
+                        $"  [NOTICE] Anomaly detector (KNN) [no baseline]: Not enough data yet ({snapshotCount}/{AnomalyDetector.MinVectorsRequired} vectors).");
                 }
                 else
                 {
-                    if (anomalyImpact > highestImpact) highestImpact = anomalyImpact;
-                    firedCount++;
-                    string knnLabel = ToImpactLabel(anomalyImpact);
-                    string focusNote = anomalyImpact == ThreatImpact.Suspicious && CountTopWriteDirectories(profile) == 1
-                        ? " Activity was concentrated in one location."
-                        : "";
-                    report.DecisionReasons.Add($"  [{knnLabel}] Anomaly detector (KNN): unusual file activity — {metrics}.{focusNote}");
+                    string baselineTag = anomaly.BaselineUsed ? " [baseline used]" : " [no baseline — self-referential]";
+                    report.DecisionReasons.Add($"  [SAFE] Anomaly detector (KNN){baselineTag}: Safe — {metricsDisplay}");
                 }
             }
 
@@ -328,9 +380,9 @@ namespace Cyber_behaviour_profiling
                 foreach (var f in dirInvestigation.Findings)
                 {
                     ThreatImpact findingImpact = ToThreatImpact(f.Severity);
-                    report.DecisionReasons.Add($"  [{ToImpactLabel(findingImpact)}] {f.Description}");
+                    report.DecisionReasons.Add($"  [{ToFindingLabel(f.Severity, findingImpact)}] {f.Description}");
                     foreach (var child in f.Children)
-                        report.DecisionReasons.Add($"    ↳ [{ToImpactLabel(ToThreatImpact(child.Severity))}] {child.Description}");
+                        report.DecisionReasons.Add($"    ↳ [{ToFindingLabel(child.Severity, ToThreatImpact(child.Severity))}] {child.Description}");
                 }
 
                 if (dirInvestigation.OverallSuspicion >= SuspicionLevel.High && !chainResult.HasHardIndicator)
@@ -352,9 +404,9 @@ namespace Cyber_behaviour_profiling
                 foreach (var f in netInvestigation.Findings)
                 {
                     ThreatImpact findingImpact = ToThreatImpact(f.Severity);
-                    report.DecisionReasons.Add($"  [{ToImpactLabel(findingImpact)}] {f.Description}");
+                    report.DecisionReasons.Add($"  [{ToFindingLabel(f.Severity, findingImpact)}] {f.Description}");
                     foreach (var child in f.Children)
-                        report.DecisionReasons.Add($"    ↳ [{ToImpactLabel(ToThreatImpact(child.Severity))}] {child.Description}");
+                        report.DecisionReasons.Add($"    ↳ [{ToFindingLabel(child.Severity, ToThreatImpact(child.Severity))}] {child.Description}");
                 }
 
                 if (netInvestigation.OverallSuspicion >= SuspicionLevel.High && !chainResult.HasHardIndicator)
@@ -373,10 +425,15 @@ namespace Cyber_behaviour_profiling
                 }
             }
 
-            if ((chainResult.HasHardIndicator || hasBehavioralRedFlag) && highestImpact < ThreatImpact.Malicious)
+            if (chainResult.HasHardIndicator && highestImpact < ThreatImpact.Malicious)
             {
                 highestImpact = ThreatImpact.Malicious;
                 report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Malicious)}] Multiple high-confidence signals point to malicious activity.");
+            }
+            else if (!chainResult.HasHardIndicator && hasBehavioralRedFlag && highestImpact < ThreatImpact.Suspicious)
+            {
+                highestImpact = ThreatImpact.Suspicious;
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Suspicious)}] Behavioral red-flag pattern observed (staged executable cleanup or self-delete behaviour).");
             }
 
             if (highestImpact == ThreatImpact.Inconclusive &&
@@ -387,7 +444,6 @@ namespace Cyber_behaviour_profiling
                 report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Safe)}] Process verified as safe: trusted publisher identity '{ctx.SignerName}' passed signature and revocation validation.");
             }
 
-            // ── Final verdict ──
             report.FinalVerdict = highestImpact;
             report.FiredChecks = firedCount;
             report.TotalChecks = checks.Count;
@@ -438,46 +494,92 @@ namespace Cyber_behaviour_profiling
         internal static ThreatImpact DetermineAnomalyImpact(
             AnomalyResult anomaly,
             IReadOnlyCollection<SuspiciousEvent> events,
-            ProcessProfile profile,
-            bool hasBehavioralRedFlag,
-            bool hasHardIndicator)
+            ProcessProfile profile)
         {
             if (!anomaly.AnomalyDetected)
                 return ThreatImpact.Safe;
 
-            bool hasCorroboration = HasAnomalyCorroboration(events);
-            bool focusedSingleDirectoryBurst = CountTopWriteDirectories(profile) <= 1 &&
-                                              !HasPayloadLikeProfileEvidence(profile);
+            AnomalyConfidenceTier confidenceTier = GetAnomalyConfidenceTier(anomaly);
+            ThreatImpact impact = ComputeIndependentKnnImpact(anomaly, confidenceTier);
 
-            if (!hasCorroboration && !anomaly.IsSustained && focusedSingleDirectoryBurst)
-                return ThreatImpact.Safe;
+            if (!anomaly.BaselineUsed &&
+                impact == ThreatImpact.Inconclusive &&
+                HasAnomalyCorroboration(events))
+            {
+                impact = ThreatImpact.Suspicious;
+            }
 
-            if (ShouldEscalateAnomalyToMalicious(events, profile, hasBehavioralRedFlag, hasHardIndicator))
+            if (ShouldEscalateAnomalyToMalicious(anomaly, events, profile))
                 return ThreatImpact.Malicious;
 
-            if (hasCorroboration)
-                return ThreatImpact.Suspicious;
+            return impact;
+        }
 
-            return ThreatImpact.Inconclusive;
+        internal static ThreatImpact ComputeIndependentKnnImpact(
+            AnomalyResult anomaly,
+            AnomalyConfidenceTier tier)
+        {
+            if (!anomaly.AnomalyDetected)
+                return ThreatImpact.Safe;
+
+            if (!anomaly.BaselineUsed)
+            {
+                return tier switch
+                {
+                    AnomalyConfidenceTier.Extreme  => ThreatImpact.Suspicious,
+                    AnomalyConfidenceTier.High     => ThreatImpact.Suspicious,
+                    AnomalyConfidenceTier.Moderate => ThreatImpact.Inconclusive,
+                    _                              => ThreatImpact.Safe
+                };
+            }
+
+            return tier == AnomalyConfidenceTier.Extreme
+                ? ThreatImpact.Malicious
+                : ThreatImpact.Suspicious;
         }
 
         internal static bool ShouldEscalateAnomalyToMalicious(
+            AnomalyResult anomaly,
             IReadOnlyCollection<SuspiciousEvent> events,
-            ProcessProfile profile,
-            bool hasBehavioralRedFlag,
-            bool hasHardIndicator)
+            ProcessProfile profile)
         {
-            if (hasHardIndicator || hasBehavioralRedFlag)
+            _ = profile;
+
+            if (!anomaly.BaselineUsed)
+                return false;
+
+            if (HasHardHighRiskEvents(events))
                 return true;
 
-            bool hasHighRiskEvents = HasHighRiskEventEvidence(events);
+            return false;
+        }
 
-            if (hasHighRiskEvents)
-                return true;
+        private static AnomalyConfidenceTier GetAnomalyConfidenceTier(AnomalyResult anomaly)
+        {
+            if (!anomaly.AnomalyDetected)
+                return AnomalyConfidenceTier.Low;
 
-            bool hasPayloadLikeProfileEvidence = HasPayloadLikeProfileEvidence(profile);
+            double threshold = Math.Max(0.001, anomaly.Threshold);
+            double marginOverThreshold = anomaly.KnnDistance > threshold
+                ? (anomaly.KnnDistance - threshold) / threshold
+                : 0.0;
 
-            return hasPayloadLikeProfileEvidence;
+            bool hasHighSignalMetric = anomaly.SpikedMetrics.Any(metric =>
+                metric.Contains("Payload Write Rate", StringComparison.OrdinalIgnoreCase) ||
+                metric.Contains("Sensitive Access Rate", StringComparison.OrdinalIgnoreCase));
+            bool hasHighSignal = anomaly.HasHighSignalFeatureSpike || hasHighSignalMetric;
+
+            bool extremeMargin = marginOverThreshold >= 3.0;
+            if ((marginOverThreshold >= 2.0 && anomaly.IsSustained || extremeMargin) && hasHighSignal)
+                return AnomalyConfidenceTier.Extreme;
+
+            if (marginOverThreshold >= 1.2 || anomaly.Score >= 38)
+                return AnomalyConfidenceTier.High;
+
+            if (marginOverThreshold >= 0.55 || anomaly.Score >= 28 || anomaly.SpikedMetrics.Count >= 2)
+                return AnomalyConfidenceTier.Moderate;
+
+            return AnomalyConfidenceTier.Low;
         }
 
         private static bool HasAnomalyCorroboration(IReadOnlyCollection<SuspiciousEvent> events) =>
@@ -566,18 +668,11 @@ namespace Cyber_behaviour_profiling
             if (ctx.FilePath != "UNKNOWN" && !ctx.IsSuspiciousPath)
                 reasons.Add($"Running from a standard install location ({ctx.FilePath}).");
 
-            var genericShells = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "explorer", "explorer.exe", "cmd", "cmd.exe",
-                "powershell", "powershell.exe", "pwsh", "pwsh.exe",
-                "wscript", "wscript.exe", "cscript", "cscript.exe"
-            };
-
             if (ctx.ParentIsSuspicious)
             {
                 reasons.Add($"Parent process '{ctx.ParentProcess}' is flagged as suspicious — this does not confirm the child is dangerous, but warrants attention.");
             }
-            else if (genericShells.Contains(ctx.ParentProcess))
+            else if (MapToData.GenericShells.Contains(ctx.ParentProcess))
             {
                 reasons.Add($"Parent process is '{ctx.ParentProcess}' (the Windows shell). This is neutral — most user-launched applications start from explorer.");
             }
@@ -646,7 +741,7 @@ namespace Cyber_behaviour_profiling
                 return true;
             if (ev.EventType is "NetworkConnect" or "DNS_Query")
                 return ev.Category is "network_c2" or "dns_c2";
-            if (IsCredentialCollectionEvent(ev))
+            if (IsHardCredentialCollectionEvent(ev))
                 return true;
             return false;
         }
@@ -660,8 +755,11 @@ namespace Cyber_behaviour_profiling
             return raw.Contains("\\protect\\") || raw.Contains("\\credentials\\") || raw.Contains("\\vault\\");
         }
 
+        private static bool IsHardCredentialCollectionEvent(SuspiciousEvent ev) =>
+            ev.Category is "credential_file_access" or "registry_credential_access" or "lsass_access";
+
         private static bool IsCredentialCollectionEvent(SuspiciousEvent ev) =>
-            ev.Category is "credential_file_access" or "registry_credential_access" or "lsass_access" ||
+            IsHardCredentialCollectionEvent(ev) ||
             IsSensitiveVaultAccessEvent(ev);
 
         private static bool HasCredentialRuntimeActivity(IReadOnlyCollection<SuspiciousEvent> events) =>
@@ -675,6 +773,13 @@ namespace Cyber_behaviour_profiling
                 "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
                 "process_injection" or "process_tampering" or "network_c2" or "dns_c2") ||
             events.Any(IsSensitiveVaultAccessEvent);
+
+        private static bool HasHardHighRiskEvents(IReadOnlyCollection<SuspiciousEvent> events) =>
+            events.Any(e => e.EventType is "DPAPI_Decrypt" or "LsassAccess" or "RemoteThreadInjection" or
+                "ProcessTampering" or "AccessibilityBinaryOverwrite") ||
+            events.Any(e => e.Category is "credential_file_access" or "registry_credential_access" or "lsass_access" or
+                "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
+                "process_injection" or "process_tampering" or "network_c2" or "dns_c2");
 
         private static bool HasSuspiciousExecutionEvidence(IReadOnlyCollection<SuspiciousEvent> events) =>
             events.Any(e => e.EventType is "SuspiciousCommand" or "DiscoverySpawn" or "DPAPI_Decrypt" or
@@ -867,6 +972,11 @@ namespace Cyber_behaviour_profiling
             _ => "SAFE"
         };
 
+        private static string ToFindingLabel(FindingSeverity severity, ThreatImpact impact) =>
+            severity == FindingSeverity.Info
+                ? "NOTICE"
+                : ToImpactLabel(impact);
+
         private static ThreatImpact ToThreatImpact(FindingSeverity severity) => severity switch
         {
             FindingSeverity.Alert => ThreatImpact.Malicious,
@@ -940,7 +1050,6 @@ namespace Cyber_behaviour_profiling
             bool claimsKnownName = MapToData._processTrustMultipliers.ContainsKey(name) ||
                                    MapToData._processTrustMultipliers.ContainsKey(name + ".exe");
 
-        
             bool claimsWindowsSystemName = MapToData._trustedSystem.Any(t =>
                 Path.GetFileNameWithoutExtension(t).Equals(nameNoExt, StringComparison.OrdinalIgnoreCase));
 
@@ -1129,7 +1238,7 @@ namespace Cyber_behaviour_profiling
             yield return Check(SemanticCheckId.InheritedSeDebugPrivilege,
                 debugPrivSetOnly,
                 ThreatImpact.Inconclusive,
-                "SeDebugPrivilege is enabled, but no corroborating misuse was observed.");
+                "SeDebugPrivilege is enabled, but no misuse was observed.");
         }
 
         internal static bool ShouldFlagUnexpectedElevation(
@@ -1341,10 +1450,10 @@ namespace Cyber_behaviour_profiling
             var ordered = events.OrderBy(e => e.Timestamp).ToList();
 
             yield return Check(SemanticCheckId.AllActivityInTwoSecondBurst,
-                totalSpan < 2.0 && events.Count > 3,
+                totalSpan < MapToData.BurstSeconds && events.Count > 3,
                 ThreatImpact.Suspicious, $"All {events.Count} events in {totalSpan:F2}s burst");
 
-            var recentWindow = ordered.Where(e => (e.Timestamp - first).TotalSeconds <= 5.0).ToList();
+            var recentWindow = ordered.Where(e => (e.Timestamp - first).TotalSeconds <= MapToData.DiversitySeconds).ToList();
             var tacticDiversity = recentWindow
                 .Where(e => !string.IsNullOrEmpty(e.Category))
                 .Select(e => e.Category)
@@ -1352,12 +1461,12 @@ namespace Cyber_behaviour_profiling
                 .Count();
 
             yield return Check(SemanticCheckId.MultiTacticActivityInFiveSecondWindow,
-                tacticDiversity >= 3,
-                ThreatImpact.Suspicious, $"{tacticDiversity} different suspicious activity categories within 5 seconds");
+                tacticDiversity >= MapToData.DiversityMinTactics,
+                ThreatImpact.Suspicious, $"{tacticDiversity} different suspicious activity categories within {MapToData.DiversitySeconds:F0} seconds");
 
             long totalAttempts = events.Sum(e => (long)e.AttemptCount);
             yield return Check(SemanticCheckId.MassiveAttemptCountForShortRuntime,
-                ctx.UptimeSeconds < 60 && totalAttempts > 1000,
+                ctx.UptimeSeconds < MapToData.MassiveCountWindowSeconds && totalAttempts > MapToData.MassiveCountThreshold,
                 ThreatImpact.Suspicious, $"{totalAttempts:N0} events in {ctx.UptimeSeconds:F0}s");
         }
 
@@ -1389,23 +1498,33 @@ namespace Cyber_behaviour_profiling
                 $"{execWrites.Count} executable or script file(s) were written to a temporary or user-accessible location: " +
                 string.Join(", ", execWrites.Take(3).Select(e => Path.GetFileName(e.RawData ?? "?"))));
 
-            var harvestKeywords = new[] {
-                "dump", "loot", "creds", "output", "pass", "hash", "ntlm",
-                "shadow", "sam_", "stolen", "harvest", "exfil", "data_out",
-                "results", "grabbed", "pwned", "leaked"
-            };
-            var harvestWrites = relevantContextEvents
-                .Where(e =>
-                {
-                    string fn = Path.GetFileNameWithoutExtension(e.RawData ?? "").ToLowerInvariant();
-                    return harvestKeywords.Any(k => fn.Contains(k));
+            var highConfWrites = relevantContextEvents
+                .Where(e => {
+                    string fn = Path.GetFileName(e.RawData ?? "").ToLowerInvariant();
+                    return MapToData.HarvestHighConfidence.Any(h => fn.Equals(h) || fn.Contains(h));
                 }).ToList();
 
-            yield return Check(SemanticCheckId.CredentialHarvestFileStaged,
-                harvestWrites.Any(),
-                ThreatImpact.Malicious,
-                $"Credential-named file(s) written: {string.Join(", ", harvestWrites.Take(3).Select(e => Path.GetFileName(e.RawData ?? "?")))}");
+            var suspConfWrites = relevantContextEvents
+                .Where(e => {
+                    string fn = Path.GetFileNameWithoutExtension(e.RawData ?? "").ToLowerInvariant();
+                    return MapToData.HarvestSuspiciousKeywords.Any(k => fn.Contains(k)) && !highConfWrites.Contains(e);
+                }).ToList();
 
+            if (highConfWrites.Any())
+            {
+                yield return Check(SemanticCheckId.CredentialHarvestFileStaged,
+                    true,
+                    ThreatImpact.Malicious,
+                    $"Hard match on high-confidence credential harvest file(s): {string.Join(", ", highConfWrites.Take(3).Select(e => Path.GetFileName(e.RawData ?? "?")))}");
+            }
+
+            if (suspConfWrites.Any())
+            {
+                yield return Check(SemanticCheckId.PotentialCredentialStaging,
+                    true,
+                    ThreatImpact.Suspicious,
+                    $"Suspiciously named file(s) in staging folder: {string.Join(", ", suspConfWrites.Take(3).Select(e => Path.GetFileName(e.RawData ?? "?")))}");
+            }
 
             DateTime earliestCredAccess = DateTime.MaxValue;
             int credEventsCount = 0;
@@ -1731,7 +1850,6 @@ namespace Cyber_behaviour_profiling
             return droppedName.Contains(processNameNoExt);
         }
 
-
         private static IEnumerable<SemanticCheck> CheckSysmonEvents(List<SuspiciousEvent> events)
         {
             yield return Check(SemanticCheckId.LsassMemoryAccess,
@@ -2043,7 +2161,7 @@ namespace Cyber_behaviour_profiling
                 {
                     using var s = new ManagementObjectSearcher(
                         $"SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = {current}");
-                    
+
                     int parentId = -1;
                     foreach (var r in s.Get())
                     {
@@ -2051,7 +2169,7 @@ namespace Cyber_behaviour_profiling
                     }
 
                     if (parentId <= 0 || parentId == current) break;
-                    
+
                     using var parentProc = Process.GetProcessById(parentId);
                     string parentName = parentProc.ProcessName;
                     if (!string.IsNullOrWhiteSpace(parentName) &&
@@ -2059,7 +2177,7 @@ namespace Cyber_behaviour_profiling
                     {
                         chain.Add(parentName);
                     }
-                    
+
                     current = parentId;
                 }
                 catch { break; }
@@ -2116,7 +2234,7 @@ namespace Cyber_behaviour_profiling
                     IntPtr buffer = Marshal.AllocHGlobal(size);
                     try
                     {
-                        // TokenElevation = 20
+
                         if (!GetTokenInformation(tokenHandle, 20, buffer, size, out _)) return false;
                         return Marshal.ReadInt32(buffer) != 0;
                     }

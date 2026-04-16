@@ -3,14 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Cyber Behaviour Profiler" Height="450" Width="800"
         WindowStartupLocation="CenterScreen">
-    
-    <!-- Simple Layout -->
+
     <Grid Margin="20">
         <StackPanel>
             <TextBlock Text="Cyber Behaviour Profiler" FontSize="24" FontWeight="Bold" Margin="0,0,0,20"/>
-            
+
             <TextBlock Text="This is your future GUI." FontSize="16" Foreground="Gray"/>
-            
+
             <Button Content="Start Monitoring (Placeholder)" 
                     Width="200" Height="40" Margin="0,20,0,0"
                     HorizontalAlignment="Left"/>

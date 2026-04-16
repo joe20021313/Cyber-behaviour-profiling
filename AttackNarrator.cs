@@ -68,11 +68,6 @@ namespace Cyber_behaviour_profiling
 
     public static class AttackNarrator
     {
-        public static bool IsHighValueCategory(string category) =>
-            category is "credential_file_access" or "registry_credential_access"
-                     or "lsass_access" or "dpapi_decrypt"
-                     or "network_c2" or "dns_c2";
-
         public static string ToGrade(ThreatImpact impact) => impact switch
         {
             ThreatImpact.Malicious    => "MALICIOUS",
@@ -105,7 +100,6 @@ namespace Cyber_behaviour_profiling
             string grade = ToGrade(report.FinalVerdict);
             var launchContext = BuildLaunchContext(profile);
             DateTime narrativeStart = ResolveNarrativeStart(profile);
-
 
             bool isSpawned = launchContext.Count > 0;
 
@@ -376,7 +370,7 @@ namespace Cyber_behaviour_profiling
             if (ev.EventType == "RemoteThreadInjection")
                 return $"[!!!] Injected remote thread into '{ind}'{reps}";
             if (ev.EventType == "ProcessTampering")
-                return $"[!!!] Process image replaced — hollowing/herpaderping{reps}";
+                return $"[!!!] Process image replaced{reps}";
             if (ev.EventType == "DPAPI_Decrypt")
                 return $"Called DPAPI to decrypt protected data{reps}";
 

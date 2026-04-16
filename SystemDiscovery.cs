@@ -191,8 +191,6 @@ namespace Cyber_behaviour_profiling
 
             var diff = CompareSnapshots(before, after);
 
-           
-
             foreach (var file in diff.NewFiles)
             {
                 if (IsNoise(file.FullPath)) continue;

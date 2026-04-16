@@ -12,8 +12,6 @@ public partial class Program
     public static void Main(string[] args) { }
 }
 
-
-
 public class MappedRule
 {
     public string Pattern { get; set; } = "";
@@ -160,6 +158,34 @@ public class ProcessesData
     public List<CommandIndicator> suspicious_commands { get; set; }
 }
 
+public class HeuristicThresholds
+{
+    public double burst_seconds { get; set; }
+    public double diversity_seconds { get; set; }
+    public int    diversity_min_tactics { get; set; }
+    public int    massive_count_threshold { get; set; }
+    public int    massive_count_window_seconds { get; set; }
+
+    public List<double>? knn_scale_floors { get; set; }
+
+    public int? max_baseline_snapshots { get; set; }
+
+    public int? max_anomaly_history { get; set; }
+
+    public double? snapshot_observation_retention_minutes { get; set; }
+
+    public double? z_threshold    { get; set; }
+    public double? distance_floor { get; set; }
+}
+
+public class SemanticHeuristicsData
+{
+    public List<string> harvest_high_confidence { get; set; }
+    public List<string> harvest_suspicious_keywords { get; set; }
+    public List<string> generic_shells { get; set; }
+    public HeuristicThresholds thresholds { get; set; }
+}
+
 public class ThreatData
 {
     public FileOperationsData file_operations { get; set; }
@@ -168,6 +194,7 @@ public class ThreatData
     public ProcessesData processes { get; set; }
     public List<NamedIndicator> discovery_commands { get; set; }
     public ProcessTrustData process_trust { get; set; }
+    public SemanticHeuristicsData semantic_heuristics { get; set; }
 }
 
 public class ProcessTrustData
@@ -189,8 +216,8 @@ public static class MapToData
 {
     public static event Action<Cyber_behaviour_profiling.MonitoringEventUpdate>? SuspiciousEventObserved;
 
-    private const int MaxAnomalyHistory = 60;
-    private static readonly TimeSpan SnapshotObservationRetention = TimeSpan.FromMinutes(10);
+    private static int      MaxAnomalyHistory             = 120;
+    private static TimeSpan SnapshotObservationRetention  = TimeSpan.FromMinutes(10);
     private static readonly Regex ExecutableSuffixPattern = new(@"(?<=\b[\w.-]+)\.exe\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex MultiWhitespacePattern = new(@"\s+", RegexOptions.Compiled);
 
@@ -224,6 +251,46 @@ public static class MapToData
         return path;
     }
 
+    public static string ResolveBaselinePath(string? anchorPath = null)
+    {
+        string? startDir = null;
+        if (!string.IsNullOrWhiteSpace(anchorPath))
+        {
+            string fullAnchor = Path.GetFullPath(anchorPath);
+            startDir = Directory.Exists(fullAnchor)
+                ? fullAnchor
+                : Path.GetDirectoryName(fullAnchor);
+        }
+
+        startDir ??= AppContext.BaseDirectory;
+
+        string? farthestBaseline = null;
+        string? farthestDataDir = null;
+        string? dir = startDir;
+
+        for (int i = 0; i < 10 && !string.IsNullOrWhiteSpace(dir); i++)
+        {
+            string baselineCandidate = Path.Combine(dir, "baselines.json");
+            string dataCandidate = Path.Combine(dir, "data.json");
+
+            if (File.Exists(dataCandidate))
+                farthestDataDir = dir;
+
+            if (File.Exists(baselineCandidate))
+                farthestBaseline = baselineCandidate;
+
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        if (!string.IsNullOrWhiteSpace(farthestBaseline))
+            return farthestBaseline;
+
+        if (!string.IsNullOrWhiteSpace(farthestDataDir))
+            return Path.Combine(farthestDataDir, "baselines.json");
+
+        return Path.Combine(AppContext.BaseDirectory, "baselines.json");
+    }
+
     private static List<MappedRule> _registryRules = new();
     private static List<MappedRule> _writeRules = new();
     private static List<MappedRule> _overwriteRules = new();
@@ -248,6 +315,17 @@ public static class MapToData
     public static List<string> _trustedSystem = new();
     public static List<string> _trustedUserApps = new();
     public static Dictionary<string, double> _processTrustMultipliers = new(StringComparer.OrdinalIgnoreCase);
+
+    public static List<string> HarvestHighConfidence = new();
+    public static List<string> HarvestSuspiciousKeywords = new();
+    public static HashSet<string> GenericShells = new(StringComparer.OrdinalIgnoreCase);
+
+    public static double BurstSeconds = 2.0;
+    public static double DiversitySeconds = 5.0;
+    public static int DiversityMinTactics = 3;
+    public static int MassiveCountThreshold = 1000;
+    public static int MassiveCountWindowSeconds = 60;
+
     public static HashSet<string> _trustedPublishers = new(StringComparer.OrdinalIgnoreCase);
     public static List<string> _contextSignalPaths = new();
     public static List<string> _runtimeArtifactMarkers = new();
@@ -315,16 +393,7 @@ public static class MapToData
 
                 if (profile.PrevSnapshotTime == DateTime.MinValue)
                 {
-                    profile.PrevFilteredWrites = profile.TotalFilteredWrites;
-                    profile.PrevFilteredDeletes = profile.TotalFilteredDeletes;
-                    profile.PrevPayloadLikeWrites = profile.TotalPayloadLikeWrites;
-                    profile.PrevSensitiveAccessEvents = profile.TotalSensitiveAccessEvents;
-                    profile.PrevFileWrites = profile.TotalFileWrites;
-                    profile.PrevFileDeletes = profile.TotalFileDeletes;
-                    profile.PrevContextSignalWrites = profile.TotalContextSignalWrites;
-                    profile.PrevUncommonWriteEvents = profile.TotalUncommonWriteEvents;
-                    profile.PrevSnapshotTime = now;
-                    continue;
+                    profile.PrevSnapshotTime = profile.FirstSeen;
                 }
 
                 double elapsed = (now - profile.PrevSnapshotTime).TotalSeconds;
@@ -470,6 +539,46 @@ public static class MapToData
         _browserProcesses = new HashSet<string>(
             data.processes?.browser_processes ?? new(),
             StringComparer.OrdinalIgnoreCase);
+
+        var heuristics = data.semantic_heuristics;
+        if (heuristics != null)
+        {
+            HarvestHighConfidence = heuristics.harvest_high_confidence?
+                .Select(s => s.ToLowerInvariant()).ToList() ?? new();
+            HarvestSuspiciousKeywords = heuristics.harvest_suspicious_keywords?
+                .Select(s => s.ToLowerInvariant()).ToList() ?? new();
+            GenericShells = new HashSet<string>(
+                heuristics.generic_shells ?? new(), StringComparer.OrdinalIgnoreCase);
+
+            if (heuristics.thresholds != null)
+            {
+                BurstSeconds = heuristics.thresholds.burst_seconds;
+                DiversitySeconds = heuristics.thresholds.diversity_seconds;
+                DiversityMinTactics = heuristics.thresholds.diversity_min_tactics;
+                MassiveCountThreshold = heuristics.thresholds.massive_count_threshold;
+                MassiveCountWindowSeconds = heuristics.thresholds.massive_count_window_seconds;
+
+                if (heuristics.thresholds.knn_scale_floors?.Count >= 4)
+                    AnomalyDetector.ConfigureScaleFloors(
+                        heuristics.thresholds.knn_scale_floors.ToArray());
+
+                if (heuristics.thresholds.max_baseline_snapshots.HasValue)
+                    AnomalyDetector.ConfigureMaxSnapshots(
+                        heuristics.thresholds.max_baseline_snapshots.Value);
+
+                if (heuristics.thresholds.max_anomaly_history.HasValue)
+                    MaxAnomalyHistory = Math.Max(1, heuristics.thresholds.max_anomaly_history.Value);
+
+                if (heuristics.thresholds.snapshot_observation_retention_minutes.HasValue)
+                    SnapshotObservationRetention = TimeSpan.FromMinutes(
+                        Math.Max(0.1, heuristics.thresholds.snapshot_observation_retention_minutes.Value));
+
+                if (heuristics.thresholds.z_threshold.HasValue || heuristics.thresholds.distance_floor.HasValue)
+                    AnomalyDetector.ConfigureDetector(
+                        heuristics.thresholds.z_threshold    ?? 2.5,
+                        heuristics.thresholds.distance_floor ?? 0.5);
+            }
+        }
     }
 
     public static void EvaluateFileOperation(int pid, string processName, string filePath, string eventType)
@@ -667,7 +776,6 @@ public static class MapToData
             });
         }
 
-
         var lolbinRule = _lolbinRules.FirstOrDefault(r =>
             lowerChild.Contains(r.Pattern) ||
             r.Pattern.Contains(lowerChild));
@@ -713,12 +821,23 @@ public static class MapToData
         return normalized;
     }
 
+    public static string FormatNetworkDestination(int pid, string destination, out string? knownDomain)
+    {
+        knownDomain = null;
+        if (string.IsNullOrWhiteSpace(destination))
+            return destination;
+
+        _recentDnsQueries.TryGetValue(pid, out knownDomain);
+        return !string.IsNullOrWhiteSpace(knownDomain)
+            ? $"{knownDomain} ({destination})"
+            : destination;
+    }
+
     public static void EvaluateNetworkConnection(int pid, string processName, string destination)
     {
         if (string.IsNullOrEmpty(destination)) return;
 
-        _recentDnsQueries.TryGetValue(pid, out string? knownDomain);
-        string fullDest = knownDomain != null ? $"{knownDomain} ({destination})" : destination;
+        string fullDest = FormatNetworkDestination(pid, destination, out string? knownDomain);
         string lowerDest = fullDest.ToLowerInvariant();
 
         var netRule = _networkRules.FirstOrDefault(r => lowerDest.Contains(r.Pattern));
@@ -794,5 +913,62 @@ public static class MapToData
         BehaviorAnalyzer.Analyze(profile);
     }
 
+    public static void LoadBaselines(string jsonFilePath)
+    {
+        if (!File.Exists(jsonFilePath))
+        {
+            AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(jsonFilePath);
+            var store = System.Text.Json.JsonSerializer.Deserialize<BaselineStore>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new BaselineStore();
+            AnomalyDetector.LoadBaselines(store.Baselines);
+        }
+        catch
+        {
+            AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
+        }
+    }
+
+    public static void SaveBaseline(string processName, ProcessBaseline baseline, string jsonFilePath)
+    {
+        BaselineStore store;
+        if (File.Exists(jsonFilePath))
+        {
+            string json = File.ReadAllText(jsonFilePath);
+            store = System.Text.Json.JsonSerializer.Deserialize<BaselineStore>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new BaselineStore();
+        }
+        else
+            store = new BaselineStore();
+
+        string key = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+        baseline.Source = "user";
+        baseline.RecordedAt = DateTime.Now.ToString("o");
+        store.Baselines[key] = baseline;
+
+        File.WriteAllText(jsonFilePath,
+            System.Text.Json.JsonSerializer.Serialize(store, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        AnomalyDetector.LoadBaselines(store.Baselines);
+    }
+
+    public static void DeleteBaseline(string processName, string jsonFilePath)
+    {
+        if (!File.Exists(jsonFilePath)) return;
+        string json = File.ReadAllText(jsonFilePath);
+        var store = System.Text.Json.JsonSerializer.Deserialize<BaselineStore>(json,
+            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new BaselineStore();
+
+        string key = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+        store.Baselines.Remove(key);
+
+        File.WriteAllText(jsonFilePath,
+            System.Text.Json.JsonSerializer.Serialize(store, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        AnomalyDetector.LoadBaselines(store.Baselines);
+    }
 
 }

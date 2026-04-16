@@ -79,6 +79,8 @@ namespace Cyber_behaviour_profiling
             }
         }
 
+        public static LiveMonitoringSession? ActiveInstance { get; private set; }
+
         public void Start(IEnumerable<string> targetProcesses, string dataFilePath, bool enablePowerShellLogging = false)
         {
             var targets = targetProcesses
@@ -108,18 +110,14 @@ namespace Cyber_behaviour_profiling
                         _pidToTarget[pid] = name;
                     }
 
-                InvestigationLog.BeginSession(
-                    $"monitor-{DateTime.Now:yyyyMMdd-HHmmss}",
-                    _targetProcesses.OrderBy(t => t, StringComparer.OrdinalIgnoreCase),
-                    dataFilePath,
-                    enablePowerShellLogging);
-                InvestigationLog.WriteStage("session",
-                    $"Initial monitored PIDs: {(_monitoredPids.Count == 0 ? "none" : string.Join(", ", _monitoredPids.OrderBy(pid => pid)))}");
-
                 _powerShellLoggingEnabled = enablePowerShellLogging;
 
                 MapToData.ResetSession();
                 MapToData.LoadData(dataFilePath);
+
+                string baselinePath = MapToData.ResolveBaselinePath(dataFilePath);
+                MapToData.LoadBaselines(baselinePath);
+
                 MapToData.SuspiciousEventObserved += OnSuspiciousEventObserved;
 
                 try
@@ -127,21 +125,18 @@ namespace Cyber_behaviour_profiling
                     var monitoredDirs = SystemDiscovery.GetMonitoredDirectories(
                         MapToData.SensitiveDirs as IReadOnlyList<string>);
                     _baselineSnapshot = SystemDiscovery.TakeDirectorySnapshot(monitoredDirs);
-                    InvestigationLog.WriteStage("session",
-                        $"Baseline snapshot captured: {_baselineSnapshot?.Files.Count ?? 0} files across {monitoredDirs.Count} monitored director{(monitoredDirs.Count == 1 ? "y" : "ies")}.");
                 }
                 catch
                 {
                     _baselineSnapshot = null;
-                    InvestigationLog.WriteStage("session", "Baseline snapshot unavailable.");
                 }
 
                 StartSysmonWatcher();
                 StartEtwSessions();
                 _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000);
-                InvestigationLog.WriteStage("session",
-                    $"Monitoring active. Telemetry sources: Sysmon watcher, ETW user, ETW DNS, ETW kernel{(_powerShellLoggingEnabled ? ", ETW PowerShell" : string.Empty)}.");
+
                 _isRunning = true;
+                ActiveInstance = this;
             }
         }
 
@@ -183,12 +178,183 @@ namespace Cyber_behaviour_profiling
             _psThread = null;
             _pidToTarget.Clear();
 
+            if (ActiveInstance == this)
+                ActiveInstance = null;
+
             return BuildResult();
+        }
+
+        public void AddBaselineTarget(string processName)
+        {
+            string nameNoExt = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+            _targetProcesses.Add(nameNoExt);
+
+            foreach (var proc in Process.GetProcessesByName(nameNoExt))
+            {
+                uint pid = (uint)proc.Id;
+                _monitoredPids.Add(pid);
+                _pidToTarget[pid] = nameNoExt;
+
+                MapToData.ActiveProfiles.GetOrAdd(proc.Id, id => new ProcessProfile
+                {
+                    ProcessId = id,
+                    ProcessName = processName,
+                    FirstSeen = DateTime.Now
+                });
+            }
+        }
+
+        public void RemoveBaselineTarget(string processName)
+        {
+            string nameNoExt = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
+            _targetProcesses.Remove(nameNoExt);
         }
 
         public void Dispose()
         {
             Stop();
+        }
+
+        private bool _isBaselineMode;
+        private string? _baselineInjectedTarget;
+
+        public void StartForBaseline(IEnumerable<string> targetProcesses, string dataFilePath)
+        {
+            var targets = targetProcesses
+                .Select(t => Path.GetFileNameWithoutExtension(t.Trim()).ToLowerInvariant())
+                .Where(t => !string.IsNullOrEmpty(t))
+                .ToList();
+
+            if (targets.Count == 0)
+                throw new ArgumentException("At least one process name is required.", nameof(targetProcesses));
+
+            MapToData.LoadData(dataFilePath);
+            MapToData.LoadBaselines(MapToData.ResolveBaselinePath(dataFilePath));
+
+            var existingSession = ActiveInstance;
+            if (existingSession != null)
+            {
+
+                _baselineInjectedTarget = targets[0];
+                existingSession.AddBaselineTarget(_baselineInjectedTarget);
+
+                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000);
+                _isBaselineMode = true;
+                _isRunning = true;
+                return;
+            }
+
+            lock (_sync)
+            {
+                if (_isRunning)
+                    throw new InvalidOperationException("Session already running.");
+
+                _targetProcesses = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
+                _monitoredPids.Clear();
+                _pidToTarget.Clear();
+
+                foreach (var name in _targetProcesses)
+                    foreach (var process in Process.GetProcessesByName(name))
+                    {
+                        uint pid = (uint)process.Id;
+                        _monitoredPids.Add(pid);
+                        _pidToTarget[pid] = name;
+
+                        MapToData.ActiveProfiles.GetOrAdd(process.Id, id => new ProcessProfile
+                        {
+                            ProcessId = id,
+                            ProcessName = name + ".exe",
+                            FirstSeen = DateTime.Now
+                        });
+                    }
+
+                _kernelSession = new TraceEventSession(KernelTraceEventParser.KernelSessionName);
+
+                _kernelSession.EnableKernelProvider(
+                    KernelTraceEventParser.Keywords.FileIO |
+                    KernelTraceEventParser.Keywords.Process |
+                    KernelTraceEventParser.Keywords.FileIOInit |
+                    KernelTraceEventParser.Keywords.Registry |
+                    KernelTraceEventParser.Keywords.DiskFileIO |
+                    KernelTraceEventParser.Keywords.NetworkTCPIP);
+
+                _kernelSession.Source.Kernel.FileIOWrite += data =>
+                {
+                    if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+                        MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileWrite");
+                };
+
+                _kernelSession.Source.Kernel.FileIODelete += data =>
+                {
+                    if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
+                        MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName ?? "", "FileDelete");
+                };
+
+                _kernelSession.Source.Kernel.FileIORead += data =>
+                {
+                    if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID) &&
+                        !string.IsNullOrEmpty(data.FileName))
+                    {
+                        MapToData.EvaluateFileOperation(data.ProcessID, data.ProcessName ?? "", data.FileName, "FileRead");
+                    }
+                };
+
+                _kernelSession.Source.Kernel.ProcessStart += data =>
+                {
+                    string imageName = Path.GetFileName(data.ImageFileName ?? data.ProcessName ?? "").ToLowerInvariant();
+                    string imageNoExt = imageName.EndsWith(".exe") ? imageName[..^4] : imageName;
+
+                    if (_targetProcesses.Contains(imageNoExt) || _targetProcesses.Contains(imageName))
+                    {
+                        uint childPid = (uint)data.ProcessID;
+                        _monitoredPids.Add(childPid);
+                        _pidToTarget[childPid] = imageNoExt;
+
+                        MapToData.ActiveProfiles.GetOrAdd((int)childPid, id => new ProcessProfile
+                        {
+                            ProcessId = id,
+                            ProcessName = imageName,
+                            FirstSeen = DateTime.Now
+                        });
+                    }
+                };
+
+                _kernelThread = new Thread(() => _kernelSession.Source.Process()) { IsBackground = true };
+                _kernelThread.Start();
+
+                _snapshotTimer = new Timer(_ => MapToData.TakeAnomalySnapshot(), null, 1000, 1000);
+
+                _isBaselineMode = true;
+                _isRunning = true;
+            }
+        }
+
+        public void StopBaseline()
+        {
+            lock (_sync)
+            {
+                if (!_isRunning) return;
+                _isRunning = false;
+            }
+
+            try { _snapshotTimer?.Dispose(); } catch { }
+            _snapshotTimer = null;
+
+            if (_baselineInjectedTarget != null)
+            {
+                ActiveInstance?.RemoveBaselineTarget(_baselineInjectedTarget);
+                _baselineInjectedTarget = null;
+            }
+            else
+            {
+
+                StopSession(_kernelSession, _kernelThread);
+                _kernelSession = null;
+                _kernelThread = null;
+            }
+
+            _pidToTarget.Clear();
+            _isBaselineMode = false;
         }
 
         private void StartSysmonWatcher()
@@ -346,9 +512,7 @@ namespace Cyber_behaviour_profiling
                 if (ShouldMonitor(data.ProcessName, (uint)data.ProcessID))
                 {
                     string ip = data.daddr?.ToString() ?? "";
-                    string displayAddr = MapToData._recentDnsQueries.TryGetValue(data.ProcessID, out string? domain)
-                        ? domain
-                        : ip;
+                    string displayAddr = MapToData.FormatNetworkDestination(data.ProcessID, ip, out _);
                     FireActivity("Network", displayAddr, data.ProcessName ?? "", data.ProcessID);
                     MapToData.EvaluateNetworkConnection(data.ProcessID, data.ProcessName ?? "", ip);
                 }

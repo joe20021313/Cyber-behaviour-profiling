@@ -28,18 +28,7 @@
       "\\windows\\system32\\config\\",
       "\\windows\\ntds\\",
       "\\microsoft\\windows\\start menu\\programs\\startup\\",
-      "\\roaming\\microsoft\\windows\\start menu\\programs\\startup\\",
-      "\\discord\\local storage\\leveldb\\",
-      "\\discordcanary\\local storage\\leveldb\\",
-      "\\discordptb\\local storage\\leveldb\\",
-      "\\exodus\\exodus.wallet\\",
-      "\\atomic\\local storage\\leveldb\\",
-      "\\coinomi\\wallets\\",
-      "\\electrum\\wallets\\",
-      "\\steam\\config\\",
-      "\\epicgameslauncher\\saved\\",
-      "\\riot games\\riot client\\data\\",
-      "\\drivers\\etc\\"
+      "\\roaming\\microsoft\\windows\\start menu\\programs\\startup\\"
     ],
     "sensitive_files": [
       "vaultcli.dll",
@@ -90,9 +79,7 @@
       "ultravnc.ini",
       "wce_export.txt",
       "lsass.dmp",
-      "lsass.exe.dmp",
-      "loginusers.vdf",
-      "ssfn"
+      "lsass.exe.dmp"
     ],
     "uncommon_writes": [
       "c:\\perflogs\\",
@@ -107,7 +94,6 @@
       "c:\\windows\\tracing\\"
     ],
     "context_signals": [
-      "\\appdata\\",
       "\\appdata\\local\\temp\\",
       "\\windows\\temp\\",
       "c:\\programdata\\",
@@ -121,66 +107,6 @@
       "displayswitch.exe",
       "narrator.exe",
       "atbroker.exe"
-    ],
-    "executable_extensions": [
-      ".exe", ".dll", ".scr", ".pif", ".bat", ".ps1",
-      ".cmd", ".vbs", ".hta", ".wsf", ".com", ".msi",
-      ".js", ".jar"
-    ],
-    "font_extensions": [
-      ".ttf", ".otf", ".fon", ".fnt", ".ttc", ".eot"
-    ],
-    "benign_drop_prefixes": [
-      "__psscriptpolicytest_",
-      "__pssessionconfigurationtest_"
-    ],
-    "runtime_artifact_markers": [
-      "\\_mei",
-      "\\appdata\\local\\temp\\_mei",
-      "\\windows\\temp\\_mei"
-    ],
-    "noise_extensions": [
-      ".log", ".etl", ".tmp", ".pf", ".db-journal", ".db-wal",
-      ".nupkg", ".cache", ".lock", ".pdb", ".xml", ".json",
-      ".ngen", ".ni.dll", ".resources.dll"
-    ],
-    "noise_paths": [
-      "\\windows\\prefetch\\",
-      "\\windows\\logs\\",
-      "\\windows\\temp\\inetcache\\",
-      "\\windows\\softwaredistribution\\",
-      "\\microsoft\\windows\\inetcache\\",
-      "\\microsoft\\office\\",
-      "\\nuget\\",
-      "\\packages\\",
-      "\\obj\\debug\\",
-      "\\obj\\release\\",
-      "\\bin\\debug\\",
-      "\\bin\\release\\",
-      "\\.vs\\",
-      "\\appdata\\local\\microsoft\\clr_security_config\\"
-    ],
-    "browser_credential_dirs": [
-      "\\google\\chrome\\",
-      "\\mozilla\\firefox\\",
-      "\\mozilla\\",
-      "\\microsoft\\edge\\",
-      "\\brave\\",
-      "\\opera software\\",
-      "\\yandex\\yandexbrowser\\",
-      "\\vivaldi\\"
-    ],
-    "malware_artifacts": [
-      "mimikatz.exe", "procdump.exe", "lazagne.exe", "sharphound.exe",
-      "rubeus.exe", "seatbelt.exe", "winpeas.exe", "linpeas.sh",
-      "nc.exe", "ncat.exe", "plink.exe", "psexec.exe",
-      "payload.exe", "beacon.exe", "shell.exe", "reverse.exe",
-      "loader.exe", "dropper.exe", "inject.dll", "hook.dll",
-      "keylog.exe", "stealer.exe", "rat.exe", "backdoor.exe",
-      "dump.dmp", "lsass.dmp", "lsass.exe.dmp",
-      "wce.exe", "gsecdump.exe", "pwdump.exe",
-      "redline.exe", "vidar.exe", "lumma.exe",
-      "xmrig.exe", "nbminer.exe", "phoenixminer.exe"
     ]
   },
   "registry": {
@@ -205,15 +131,6 @@
       "software\\simontatham\\putty\\sessions",
       "software\\realvnc",
       "software\\tightvnc"
-    ],
-    "benign_services": [
-      "services\\winsock",
-      "services\\tcpip",
-      "services\\dnscache",
-      "services\\dns",
-      "services\\afunix",
-      "services\\crypt32",
-      "services\\ccg"
     ]
   },
   "network": {
@@ -228,15 +145,13 @@
       "api.telegram.org",
       "file.io",
       "anonfiles.com",
-      "gofile.io",
-      "nanopool.org",
-      "2miners.com",
-      "hashvault.pro",
-      "nicehash.com",
-      "ethermine.org",
-      "f2pool.com",
-      "supportxmr.com",
-      "herominers.com"
+      "gofile.io"
+    ],
+    "suspicious_ports": [
+      4444,
+      8080,
+      1337,
+      31337
     ]
   },
   "processes": {
@@ -256,21 +171,7 @@
       { "name": "schtasks.exe",   "description": "task scheduler — commonly used for persistence" },
       { "name": "csc.exe",        "description": "C# compiler — can be used to compile malicious code on-the-fly" },
       { "name": "jsc.exe",        "description": "JScript compiler — can be used to compile malicious code on-the-fly" },
-      { "name": "msbuild.exe",    "description": "commonly used to execute malicious build scripts" },
-      { "name": "wmic.exe",       "description": "WMI command-line — abused for lateral movement, process creation, and reconnaissance" },
-      { "name": "regasm.exe",     "description": ".NET assembly registration — can execute attacker code via COM registration" },
-      { "name": "regsvcs.exe",    "description": ".NET component services — can execute attacker code via COM registration" },
-      { "name": "installutil.exe","description": ".NET installer — abused to execute code by bypassing AppLocker" },
-      { "name": "forfiles.exe",   "description": "file batch utility — abused to execute arbitrary commands" },
-      { "name": "esentutl.exe",   "description": "ESE database utility — abused to copy locked files (SAM, NTDS)" },
-      { "name": "odbcconf.exe",   "description": "ODBC configuration — abused to load and execute arbitrary DLLs" },
-      { "name": "cmstp.exe",      "description": "Connection Manager profile installer — abused for AppLocker bypass and DLL injection via INF files" },
-      { "name": "msiexec.exe",    "description": "Windows Installer — abused to execute remote MSI packages or load malicious DLLs" },
-      { "name": "mavinject.exe",  "description": "Microsoft Application Virtualization injector — injects DLLs into running processes" },
-      { "name": "diskshadow.exe", "description": "Volume Shadow Copy scripting utility — can execute arbitrary OS commands via script mode" },
-      { "name": "netsh.exe",      "description": "Network shell — abused to load helper DLLs that execute attacker code" },
-      { "name": "hh.exe",         "description": "HTML Help executable — runs CHM files which can execute embedded scripts" },
-      { "name": "pcalua.exe",     "description": "Program Compatibility Assistant — executes arbitrary programs and can bypass whitelisting" }
+      { "name": "msbuild.exe",    "description": "commonly used to execute malicious build scripts" }
     ],
     "accessibility_binaries": [
       { "name": "sethc.exe",        "description": "Sticky Keys — commonly replaced for backdoor access" },
@@ -280,10 +181,6 @@
       { "name": "displayswitch.exe","description": "Display Switch — commonly replaced for backdoor access" },
       { "name": "narrator.exe",     "description": "Narrator — commonly replaced for backdoor access" },
       { "name": "atbroker.exe",     "description": "Assistive Technology — commonly replaced for backdoor access" }
-    ],
-    "office_apps": [
-      "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe",
-      "acrord32.exe", "foxit reader.exe", "notepad.exe", "mspaint.exe"
     ],
     "suspicious_commands": [
       { "pattern": "-nop -exec bypass",       "description": "security policy bypass" },
@@ -310,18 +207,11 @@
       { "pattern": "cmd /c start /min",        "description": "hidden/minimised process launch" },
       { "pattern": "cmd /c copy",              "description": "file copy command" },
       { "pattern": "cmd /c move",              "description": "file move command" },
-      { "pattern": "cmd /c xcopy",             "description": "file copy command" },
-      { "pattern": "vssadmin delete shadows",  "description": "shadow copy deletion" },
-      { "pattern": "wbadmin delete catalog",   "description": "backup catalog deletion" },
-      { "pattern": "bcdedit /set",             "description": "boot recovery modification" },
-      { "pattern": "wmic shadowcopy delete",   "description": "shadow copy deletion via WMI" },
-      { "pattern": "wmic process call create", "description": "WMI-based process creation" },
-      { "pattern": "schtasks /create",         "description": "scheduled task creation — persistence mechanism" },
-      { "pattern": "schtasks /change",         "description": "scheduled task modification — persistence tampering" },
-      { "pattern": "at \\\\",                   "description": "legacy remote task scheduling via at.exe" }
+      { "pattern": "cmd /c xcopy",             "description": "file copy command" }
     ]
   },
   "process_trust": {
+    "description": "Score multiplier applied to any suspicious event caused by this process. Higher = less trusted = events are scored harder.",
     "trusted_publishers": [
       "Microsoft Corporation",
       "Microsoft Windows",
@@ -345,6 +235,7 @@
     ],
     "trusted_system": {
       "multiplier": 0.3,
+      "reason": "Core Windows OS processes. Unlikely to be attacker-controlled. Events from these are low priority.",
       "processes": [
         "explorer.exe",
         "svchost.exe",
@@ -361,20 +252,9 @@
         "dwm.exe"
       ]
     },
-    "browser_processes": [
-      "chrome.exe",
-      "msedge.exe",
-      "firefox.exe",
-      "brave.exe",
-      "opera.exe",
-      "vivaldi.exe",
-      "iexplore.exe",
-      "microsoftedge.exe",
-      "waterfox.exe",
-      "librewolf.exe"
-    ],
     "trusted_user_apps": {
       "multiplier": 0.8,
+      "reason": "Common legitimate user applications. Suspicious events are noteworthy but not alarming on their own.",
       "processes": [
         "chrome.exe",
         "msedge.exe",
@@ -408,6 +288,7 @@
     },
     "shell_interpreters": {
       "multiplier": 1.8,
+      "reason": "Command-line shells and script interpreters. Frequently abused by attackers. Any suspicious event from these is high priority.",
       "processes": [
         "powershell.exe",
         "pwsh.exe",
@@ -423,6 +304,7 @@
     },
     "lolbin_tools": {
       "multiplier": 2.5,
+      "reason": "Living-off-the-land binaries. Legitimate system tools that are commonly hijacked to run attacker code.",
       "processes": [
         "regsvr32.exe",
         "rundll32.exe",
@@ -438,6 +320,26 @@
         "wmic.exe",
         "msiexec.exe",
         "sdclt.exe"
+      ]
+    },
+    "blacklisted": {
+      "multiplier": 5.0,
+      "reason": "Known malware names or tools that have no legitimate use on an end-user machine. Any event is an immediate critical alert.",
+      "processes": [
+        "mimikatz.exe",
+        "pwdump.exe",
+        "procdump.exe",
+        "psexec.exe",
+        "psexesvc.exe",
+        "cobalt strike",
+        "meterpreter",
+        "nc.exe",
+        "ncat.exe",
+        "netcat.exe",
+        "sharphound.exe",
+        "bloodhound.exe",
+        "rubeus.exe",
+        "lazagne.exe"
       ]
     }
   },
@@ -458,30 +360,108 @@
     { "name": "query.exe",      "description": "remote session discovery" },
     { "name": "wmic.exe",       "description": "system information discovery" }
   ],
-  "semantic_heuristics": {
-    "harvest_high_confidence": [
-      "creds.txt", "passwords.txt", "lsass.dmp", "sam.hiv", "system.hiv", "security.hiv", "ntds.dit", "mimikatz"
-    ],
-    "harvest_suspicious_keywords": [
-      "loot", "ntlm", "hash", "shadow", "stolen", "harvest", "exfil", "pwned", "leaked", "dump"
-    ],
-    "generic_shells": [
-      "explorer", "explorer.exe", "cmd", "cmd.exe",
-      "powershell", "powershell.exe", "pwsh", "pwsh.exe",
-      "wscript", "wscript.exe", "cscript", "cscript.exe"
-    ],
-    "thresholds": {
-      "burst_seconds": 2.0,
-      "diversity_seconds": 5.0,
-      "diversity_min_tactics": 3,
-      "massive_count_threshold": 1000,
-      "massive_count_window_seconds": 60,
-      "knn_scale_floors": [0.1, 0.05, 0.02, 0.05],
-      "max_baseline_snapshots": 50,
-      "max_anomaly_history": 120,
-      "snapshot_observation_retention_minutes": 10,
-      "z_threshold": 2.5,
-      "distance_floor": 0.5
+  "tactic_weights": {
+    "CredentialAccess":    20,
+    "Persistence":         18,
+    "DefenseEvasion":      16,
+    "Execution":           12,
+    "PrivilegeEscalation": 15,
+    "Discovery":            5,
+    "LateralMovement":     14,
+    "Collection":          10,
+    "CommandAndControl":   18,
+    "Exfiltration":        25,
+    "Impact":              22
+  },
+  "kill_chains": [
+    {
+      "name": "Credential Theft → Exfiltration",
+      "sequence": ["CredentialAccess", "CommandAndControl"],
+      "bonus": 40,
+      "description": "Process read credentials then connected to a suspicious endpoint"
+    },
+    {
+      "name": "Persistence + Defense Evasion",
+      "sequence": ["Persistence", "DefenseEvasion"],
+      "bonus": 30,
+      "description": "Process set up persistence and then tried to disable defenses"
+    },
+    {
+      "name": "Recon → Harvest",
+      "sequence": ["Execution", "Discovery", "Collection"],
+      "bonus": 35,
+      "description": "Spawned tools, surveyed the system, then started collecting data"
     }
+  ],
+  "indicator_classification": {
+    "hard_indicators": [
+      "credential_file_access",
+      "dpapi_decrypt",
+      "network_c2",
+      "dns_c2",
+      "process_blacklisted",
+      "registry_defense_evasion",
+      "registry_credential_access",
+      "file_persistence"
+    ],
+    "soft_indicators": [
+      "file_defense_evasion",
+      "context_signal",
+      "registry_persistence",
+      "collection",
+      "process_discovery",
+      "process_lolbin",
+      "registry_privilege_escalation"
+    ]
+  },
+  "area_weights": {
+    "high_value": ["WindowsCredentialStore", "BrowserCredentials", "ThirdPartyCredentials", "DPAPIDecryption"],
+    "medium_value": ["DefenseTools"],
+    "low_value": ["PersistenceMechanisms", "UnusualWriteLocations", "NetworkCommunication", "ProcessExecution"]
+  },
+  "confirmation_chains": [
+    {
+      "name": "Credential Theft + Exfiltration",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": ["CommandAndControl"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Credential + DPAPI",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": [],
+      "corroborating_events": ["DPAPI_Decrypt"]
+    },
+    {
+      "name": "Persistence + Defense Evasion",
+      "required_tactics": ["Persistence"],
+      "corroborating_tactics": ["DefenseEvasion"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Collection + Exfiltration",
+      "required_tactics": ["Collection"],
+      "corroborating_tactics": ["CommandAndControl"],
+      "corroborating_events": []
+    },
+    {
+      "name": "Multi-Source Credential Harvesting",
+      "required_tactics": ["CredentialAccess"],
+      "corroborating_tactics": [],
+      "corroborating_events": ["SensitiveDirAccess"]
+    }
+  ],
+  "scoring": {
+    "low_threshold": 15,
+    "medium_threshold": 35,
+    "review_threshold": 40,
+    "high_threshold": 60,
+    "critical_threshold": 85,
+    "velocity_window_seconds": 5,
+    "velocity_event_threshold": 5,
+    "velocity_bonus": 30,
+    "breadth_bonus_2": 10,
+    "breadth_bonus_3plus": 25,
+    "tactic_diversity_bonus_per_tactic": 8
   }
 }
