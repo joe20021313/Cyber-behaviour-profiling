@@ -213,11 +213,11 @@ namespace Cyber_behaviour_profiling
             string source = parentPid > 0 ? $"{parentLabel} (PID {parentPid})" : parentLabel;
 
             if (!string.IsNullOrWhiteSpace(commandLine))
-                return $"Launched by {source}: {commandLine}";
+                return $"Started by {source} with command: {commandLine}";
 
             return string.Equals(source, "unknown parent", StringComparison.OrdinalIgnoreCase)
                 ? ""
-                : $"Launched by {source}";
+                : $"Started by {source}";
         }
 
         private static NarrativeStep TranslateEvent(SuspiciousEvent ev)
@@ -270,95 +270,95 @@ namespace Cyber_behaviour_profiling
         private static string BuildInfoHeadline(SuspiciousEvent ev, string raw, string ind, string reps)
         {
             if (raw.Contains("\\temp\\") || ind.Contains("temp"))
-                return $"Wrote to temp folder → '{ShortPath(ev.RawData)}'{reps}";
+                return $"Wrote to a temp location: '{ShortPath(ev.RawData)}'{reps}";
 
-            return $"Context file activity → '{ShortPath(ev.RawData)}'{reps}";
+            return $"Related file activity near '{ShortPath(ev.RawData)}'{reps}";
         }
 
         private static string BuildFileHeadline(SuspiciousEvent ev, string raw, string ind, string reps)
         {
             if (ind.Contains("login data") || ind.Contains("logins.json"))
-                return $"Read browser saved-password database{reps}";
+                return $"Opened the browser saved-password database{reps}";
             if (ind.Contains("cookies") || ind.Contains("network\\cookies"))
-                return $"Read browser session cookies{reps}";
+                return $"Accessed browser session cookies{reps}";
             if (ind.Contains("key4.db") || ind.Contains("cert9.db"))
-                return $"Read Firefox key store{reps}";
+                return $"Accessed Firefox key-store files{reps}";
             if (ind.Contains("local state"))
-                return $"Read browser master encryption key{reps}";
+                return $"Accessed browser Local State (encryption key metadata){reps}";
             if (raw.Contains("\\protect\\"))
-                return $"Accessed DPAPI credential folder{reps}";
+                return $"Accessed the DPAPI credential folder{reps}";
             if (raw.Contains("\\credentials\\"))
-                return $"Accessed Windows Credential Manager vault{reps}";
+                return $"Accessed Windows Credential Manager data{reps}";
             if (raw.Contains("\\vault\\"))
-                return $"Accessed Windows Vault{reps}";
+                return $"Accessed Windows Vault data{reps}";
             if (ind.Contains("sethc") || ind.Contains("utilman") || ind.Contains("osk"))
-                return $"Touched accessibility binary{reps}";
+                return $"Touched an accessibility binary{reps}";
             if (raw.Contains("\\fonts\\"))
-                return $"Wrote to system fonts folder{reps}";
+                return $"Wrote into the system fonts folder{reps}";
             if (raw.Contains("\\perflogs\\") || raw.Contains("\\public\\"))
-                return $"Wrote to world-writable system directory{reps}";
+                return $"Wrote to a world-writable system directory{reps}";
             if (ev.EventType == "Executable Drop")
             {
                 string ext = Path.GetExtension(ev.RawData ?? "");
-                return $"Dropped {ext} executable{reps} → '{ev.RawData}'";
+                return $"Dropped an executable ({ext}){reps}: '{ev.RawData}'";
             }
             if (ev.EventType == "FileDelete")
-                return $"Deleted file{reps} → '{ev.RawData}'";
+                return $"Deleted file{reps}: '{ev.RawData}'";
             if (ev.EventType == "FileRename")
-                return $"Renamed/moved file{reps} → '{ev.RawData}'";
+                return $"Renamed or moved file{reps}: '{ev.RawData}'";
             if (ev.EventType == "FileWrite")
-                return $"Wrote file{reps} → '{ev.RawData}'";
+                return $"Wrote file{reps}: '{ev.RawData}'";
             if (ev.EventType == "FileRead")
-                return $"Read file{reps} → '{ev.RawData}'";
+                return $"Read file{reps}: '{ev.RawData}'";
 
-            return $"Opened '{ev.RawData}'{reps}";
+            return $"Opened file '{ev.RawData}'{reps}";
         }
 
         private static string BuildRegistryHeadline(SuspiciousEvent ev, string ind, string reps)
         {
             if (ind.Contains("currentversion\\run"))
-                return $"Added/modified startup Run key{reps}";
+                return $"Changed a startup Run key{reps}";
             if (ind.Contains("runonce"))
-                return $"Set RunOnce key{reps}";
+                return $"Updated a RunOnce key{reps}";
             if (ind.Contains("winlogon"))
-                return $"Modified Winlogon key{reps}";
+                return $"Modified a Winlogon registry key{reps}";
             if (ind.Contains("\\services"))
-                return $"Modified services registry key{reps}";
+                return $"Modified a Services registry key{reps}";
             if (ind.Contains("amsi"))
-                return $"Accessed AMSI key{reps}";
+                return $"Accessed an AMSI-related key{reps}";
             if (ind.Contains("image file execution options"))
-                return $"Accessed IFEO key{reps}";
+                return $"Accessed an IFEO key{reps}";
             if (ind.Contains("ms-settings") || ind.Contains("classes\\exefile"))
-                return $"Modified shell command handler{reps}";
+                return $"Changed a shell command handler key{reps}";
             if (ind.Contains("realvnc") || ind.Contains("tightvnc"))
-                return $"Read VNC credentials from registry{reps}";
+                return $"Read VNC-related credentials from the registry{reps}";
             if (ind.Contains("putty"))
-                return $"Read PuTTY session credentials{reps}";
+                return $"Read PuTTY session data from the registry{reps}";
             if (ind.Contains("intelliforms"))
-                return $"Read IE saved form credentials{reps}";
+                return $"Read IE saved-form credential data{reps}";
             if (ind.Contains("wow6432node"))
-                return $"Accessed 32-bit registry hive{reps}";
+                return $"Accessed the 32-bit registry hive (WOW6432Node){reps}";
 
-            return $"Accessed registry key{reps} → '{ShortKey(ev.RawData)}'";
+            return $"Accessed registry key{reps}: '{ShortKey(ev.RawData)}'";
         }
 
         private static string BuildNetworkHeadline(SuspiciousEvent ev, string ind, string reps)
         {
             if (ind.Contains("telegram") || ind.Contains("t.me"))
-                return $"Connected to Telegram API{reps}";
+                return $"Reached out to Telegram infrastructure{reps}";
             if (ind.Contains("discord"))
-                return $"Connected to Discord webhook{reps}";
+                return $"Reached a Discord endpoint (possibly webhook){reps}";
             if (ind.Contains("pastebin"))
                 return $"Connected to Pastebin{reps}";
             if (ind.Contains("raw.githubusercontent"))
                 return $"Fetched raw content from GitHub{reps}";
             if (ind.Contains("ngrok"))
-                return $"Connected to ngrok tunnel{reps}";
+                return $"Connected through an ngrok tunnel{reps}";
             if (ind.Contains("transfer.sh") || ind.Contains("file.io") ||
                 ind.Contains("anonfiles") || ind.Contains("gofile"))
-                return $"Connected to anonymous file-sharing service{reps}";
+                return $"Connected to an anonymous file-sharing service{reps}";
             if (ev.EventType == "DNS_Query")
-                return $"Resolved suspicious domain: '{ind}'{reps}";
+                return $"Resolved domain: '{ind}'{reps}";
 
             return $"Connected to '{ind}'{reps}";
         }
@@ -366,47 +366,47 @@ namespace Cyber_behaviour_profiling
         private static string BuildProcessHeadline(SuspiciousEvent ev, string ind, string reps)
         {
             if (ev.EventType == "LsassAccess")
-                return $"[!!!] Opened LSASS memory — credential dump attempt{reps}";
+                return $"[!!!] Accessed LSASS memory (credential-dump behavior){reps}";
             if (ev.EventType == "RemoteThreadInjection")
-                return $"[!!!] Injected remote thread into '{ind}'{reps}";
+                return $"[!!!] Injected a remote thread into '{ind}'{reps}";
             if (ev.EventType == "ProcessTampering")
-                return $"[!!!] Process image replaced{reps}";
+                return $"[!!!] Process image tampering observed{reps}";
             if (ev.EventType == "DPAPI_Decrypt")
                 return $"Called DPAPI to decrypt protected data{reps}";
 
             if (ind.Contains("del") || ind.Contains("remove-item") || ind.Contains("erase"))
-                return $"[!!!] Spawned delete command{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"[!!!] Spawned a delete command{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("cmd /c copy") || ind.Contains("cmd /c move") || ind.Contains("cmd /c xcopy"))
-                return $"Spawned file copy/move command{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"Spawned a file copy/move command{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("ping localhost") || ind.Contains("ping 127.0.0.1") ||
                 ind.Contains("timeout") || ind.Contains("choice /c"))
-                return $"[!!!] Delay-and-execute pattern{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"[!!!] Delay-then-execute pattern observed{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("start /min") || ind.Contains("cmd /c start"))
-                return $"Spawned hidden/minimized process{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"Spawned a hidden/minimized process{reps}: '{ShortCmd(ev.RawData)}'";
 
             if (ind.Contains("powershell") || ind.Contains("pwsh"))
-                return $"Launched PowerShell{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"Launched PowerShell{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("cmd.exe"))
-                return $"Launched cmd.exe{reps} → '{ShortCmd(ev.RawData)}'";
+                return $"Launched cmd.exe{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("wscript") || ind.Contains("cscript"))
-                return $"Executed script via WSH{reps}";
+                return $"Executed a script via Windows Script Host{reps}";
             if (ind.Contains("mshta"))
-                return $"Executed HTA via mshta.exe{reps}";
+                return $"Executed HTA content through mshta.exe{reps}";
             if (ind.Contains("rundll32"))
-                return $"Executed via rundll32{reps}";
+                return $"Executed code via rundll32{reps}";
             if (ind.Contains("regsvr32"))
-                return $"Registered/executed DLL via regsvr32{reps}";
+                return $"Registered or executed a DLL via regsvr32{reps}";
             if (ind.Contains("certutil"))
                 return $"Used certutil.exe{reps}";
             if (ind.Contains("whoami") || ind.Contains("systeminfo") ||
                 ind.Contains("ipconfig") || ind.Contains("net.exe"))
-                return $"Ran discovery command: '{ind}'{reps}";
+                return $"Ran a system discovery command: '{ind}'{reps}";
             if (ind.Contains("-encodedcommand") || ind.Contains("-enc "))
-                return $"Executed encoded PowerShell command{reps}";
+                return $"Executed an encoded PowerShell command{reps}";
             if (ind.Contains("-nop") || ind.Contains("-exec bypass") || ind.Contains("-win hidden"))
-                return $"PowerShell with bypass flags{reps}";
+                return $"PowerShell launched with bypass-style flags{reps}";
 
-            return $"Spawned '{ind}'{reps} → '{ShortCmd(ev.RawData)}'";
+            return $"Spawned process '{ind}'{reps}: '{ShortCmd(ev.RawData)}'";
         }
 
         private static string ShortPath(string path)
