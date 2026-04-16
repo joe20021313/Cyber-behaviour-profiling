@@ -27,8 +27,8 @@ namespace Cyber_behaviour_profiling
         public int ConsecutiveAnomalousWindows { get; set; }
         public bool HasHighSignalFeatureSpike { get; set; }
         public bool IsBurstDetection { get; set; }
-        public bool TripwireFired { get; set; }
-        public string TripwireReason { get; set; } = "";
+        public bool ShortLivedBurstFired { get; set; }
+        public string ShortLivedBurstReason { get; set; } = "";
 
         public bool BaselineUsed { get; set; }
 
@@ -68,17 +68,17 @@ namespace Cyber_behaviour_profiling
         private const double SensitiveRateCap      = 0.05;
         private const double UserSensitiveRateCap  = 2.0;
 
-        private const double TripwireWriteRate     = 25.0;
-        private const double TripwireDeleteRate    = 15.0;
-        private const double TripwirePayloadRate   = 8.0;
-        private const double TripwireSensitiveRate = 4.0;
+        private const double ShortLivedBurstWriteRate     = 25.0;
+        private const double ShortLivedBurstDeleteRate    = 15.0;
+        private const double ShortLivedBurstPayloadRate   = 8.0;
+        private const double ShortLivedBurstSensitiveRate = 4.0;
 
-        private static readonly double[] TripwireThresholds =
+        private static readonly double[] ShortLivedBurstThresholds =
         {
-            TripwireWriteRate,
-            TripwireDeleteRate,
-            TripwirePayloadRate,
-            TripwireSensitiveRate
+            ShortLivedBurstWriteRate,
+            ShortLivedBurstDeleteRate,
+            ShortLivedBurstPayloadRate,
+            ShortLivedBurstSensitiveRate
         };
 
         public static void ConfigureScaleFloors(double[] floors)
@@ -344,17 +344,17 @@ namespace Cyber_behaviour_profiling
             double[] candidate, List<double[]> sessionHistory, ProcessBaseline? baseline)
         {
             var result = new AnomalyResult();
-            bool allowTripwire = baseline == null;
-            if (allowTripwire && TryEvaluateTripwire(candidate, out string tripwireReason, out int tripwireMetric,
-                out double tripwireValue, out double tripwireThreshold))
+            bool allowShortLivedBurst = baseline == null;
+            if (allowShortLivedBurst && TryEvaluateShortLivedBurst(candidate, out string ShortLivedBurstReason, out int ShortLivedBurstMetric,
+                out double ShortLivedBurstValue, out double ShortLivedBurstThreshold))
             {
                 result.AnomalyDetected = true;
-                result.TripwireFired = true;
-                result.TripwireReason = tripwireReason;
+                result.ShortLivedBurstFired = true;
+                result.ShortLivedBurstReason = ShortLivedBurstReason;
                 result.Score = 36;
-                result.HasHighSignalFeatureSpike = tripwireMetric >= 2;
+                result.HasHighSignalFeatureSpike = ShortLivedBurstMetric >= 2;
                 result.SpikedMetrics.Add(
-                    $"{MetricNames[tripwireMetric]}: {tripwireValue:F1}/sec (tripwire: {tripwireThreshold:F1}/sec)");
+                    $"{MetricNames[ShortLivedBurstMetric]}: {ShortLivedBurstValue:F1}/sec (ShortLivedBurst: {ShortLivedBurstThreshold:F1}/sec)");
             }
 
             List<double[]> fullRef;
@@ -425,7 +425,7 @@ namespace Cyber_behaviour_profiling
             return result;
         }
 
-        private static bool TryEvaluateTripwire(
+        private static bool TryEvaluateShortLivedBurst(
             IReadOnlyList<double> candidate,
             out string reason,
             out int metricIndex,
@@ -437,12 +437,12 @@ namespace Cyber_behaviour_profiling
             metricValue = 0.0;
             threshold = 0.0;
 
-            int dims = Math.Min(candidate.Count, Math.Min(MetricNames.Length, TripwireThresholds.Length));
+            int dims = Math.Min(candidate.Count, Math.Min(MetricNames.Length, ShortLivedBurstThresholds.Length));
             double strongestRatio = 1.0;
 
             for (int i = 0; i < dims; i++)
             {
-                double currentThreshold = TripwireThresholds[i];
+                double currentThreshold = ShortLivedBurstThresholds[i];
                 if (currentThreshold <= 0.0)
                     continue;
 
@@ -464,7 +464,7 @@ namespace Cyber_behaviour_profiling
                 return false;
 
             reason =
-                $"{MetricNames[metricIndex]} {metricValue:F1}/sec exceeded tripwire {threshold:F1}/sec";
+                $"{MetricNames[metricIndex]} {metricValue:F1}/sec exceeded ShortLivedBurst {threshold:F1}/sec";
             return true;
         }
 

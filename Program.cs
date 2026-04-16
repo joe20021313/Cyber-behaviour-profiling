@@ -339,6 +339,20 @@ public static class MapToData
     public static List<string> _benignServices = new();
     public static HashSet<string> _officeApps = new(StringComparer.OrdinalIgnoreCase);
     public static HashSet<string> _browserProcesses = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> _browserProcessFallbackNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "msedge",
+        "chrome",
+        "firefox",
+        "iexplore",
+        "opera",
+        "brave",
+        "vivaldi",
+        "waterfox",
+        "palemoon",
+        "torbrowser",
+        "microsoftedge"
+    };
 
     public static void ResetSession()
     {
@@ -356,6 +370,34 @@ public static class MapToData
             .Where(marker => lowerPath.Contains(marker))
             .OrderByDescending(marker => marker.Length)
             .FirstOrDefault();
+    }
+
+    private static string NormalizeProcessNameNoExtension(string? processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName))
+            return "";
+
+        string candidate = processName.Trim().Trim('"');
+        int firstSpace = candidate.IndexOf(' ');
+        if (firstSpace > 0)
+            candidate = candidate[..firstSpace];
+
+        candidate = Path.GetFileName(candidate);
+        candidate = Path.GetFileNameWithoutExtension(candidate);
+        return candidate.ToLowerInvariant();
+    }
+
+    public static bool IsKnownBrowserProcessName(string? processName)
+    {
+        string normalized = NormalizeProcessNameNoExtension(processName);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        if (_browserProcessFallbackNames.Contains(normalized))
+            return true;
+
+        return _browserProcesses.Any(p =>
+            string.Equals(NormalizeProcessNameNoExtension(p), normalized, StringComparison.OrdinalIgnoreCase));
     }
 
     public static bool IsRuntimeArtifactPath(string? path)
@@ -650,7 +692,14 @@ public static class MapToData
             if (fileMatch != null)
             {
                 profile.TotalSensitiveAccessEvents++;
-                AddEventToProfile(pid, processName, eventType, fileMatch, filePath, "credential_file_access", eventType);
+                if (IsKnownBrowserProcessName(processName))
+                {
+                    AddEventToProfile(pid, processName, "SensitiveDirAccess", dirMatch, filePath, "collection", eventType);
+                }
+                else
+                {
+                    AddEventToProfile(pid, processName, eventType, fileMatch, filePath, "credential_file_access", eventType);
+                }
                 return;
             }
 

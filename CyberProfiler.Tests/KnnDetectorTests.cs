@@ -78,7 +78,7 @@ public class KnnDetectorTests
 
             Assert.True(result.BaselineUsed);
             Assert.False(result.AnomalyDetected,
-                $"Unexpected anomaly. Tripwire={result.TripwireFired}, Score={result.Score}, Dist={result.KnnDistance:F3}, Th={result.Threshold:F3}, Metrics={string.Join(" | ", result.SpikedMetrics)}");
+                $"Unexpected anomaly. ShortLivedBurst={result.ShortLivedBurstFired}, Score={result.Score}, Dist={result.KnnDistance:F3}, Th={result.Threshold:F3}, Metrics={string.Join(" | ", result.SpikedMetrics)}");
         }
         finally
         {
@@ -158,7 +158,7 @@ public class KnnDetectorTests
     }
 
     [Fact]
-    public void NoBaseline_ShortSensitiveBurst_TripwireDetectsAnomaly()
+    public void NoBaseline_ShortSensitiveBurst_ShortLivedBurstDetectsAnomaly()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
 
@@ -171,8 +171,8 @@ public class KnnDetectorTests
 
         Assert.True(result.AnomalyDetected);
         Assert.False(result.BaselineUsed);
-        Assert.True(result.TripwireFired);
-        Assert.Contains("tripwire", result.TripwireReason, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.ShortLivedBurstFired);
+        Assert.Contains("ShortLivedBurst", result.ShortLivedBurstReason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(result.SpikedMetrics, m =>
             m.Contains("Sensitive Access Rate", StringComparison.OrdinalIgnoreCase));
     }

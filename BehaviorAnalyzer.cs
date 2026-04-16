@@ -187,6 +187,7 @@ namespace Cyber_behaviour_profiling
             string nameNoExt = Path.GetFileNameWithoutExtension(name);
 
             ProcessContext ctx = GatherSystemContext(profile);
+            bool isKnownBrowserProcess = IsKnownBrowserProcess(profile, ctx);
 
             bool hasBehavioralRedFlag = HasBehavioralRedFlag(profile, ctx);
 
@@ -213,7 +214,7 @@ namespace Cyber_behaviour_profiling
             checks.AddRange(CheckSuspiciousCommandSemantics(profile));
             checks.AddRange(CheckRuntimeAnomalies(ctx, events, profile, netInvestigation));
             checks.AddRange(CheckVelocityAndDensity(events));
-            checks.AddRange(CheckSystemAreaFootprint(events, profile));
+            checks.AddRange(CheckSystemAreaFootprint(events, profile, isKnownBrowserProcess));
             checks.AddRange(CheckTemporalAnomalies(events, ctx));
             checks.AddRange(CheckContextFolderBehavior(ctx, events, profile));
             checks.AddRange(CheckExecutableDrops(ctx, events, profile));
@@ -232,7 +233,7 @@ namespace Cyber_behaviour_profiling
 
             var chainResult = new ChainConfirmationResult
             {
-                HasHardIndicator = events.Any(IsHardIndicatorEvent)
+                HasHardIndicator = events.Any(ev => IsHardIndicatorEvent(ev, !isKnownBrowserProcess))
             };
             if (!chainResult.HasHardIndicator)
                 chainResult.HasHardIndicator = checks.Any(c => c.IsFired && c.IsHardIndicator);
@@ -272,11 +273,11 @@ namespace Cyber_behaviour_profiling
             {
                 string metrics  = anomaly.SpikedMetrics.Count > 0
                     ? string.Join(", ", anomaly.SpikedMetrics)
-                    : (!string.IsNullOrWhiteSpace(anomaly.TripwireReason)
-                        ? anomaly.TripwireReason
+                    : (!string.IsNullOrWhiteSpace(anomaly.ShortLivedBurstReason)
+                        ? anomaly.ShortLivedBurstReason
                         : "file activity deviated from the session baseline");
                 string burstTag = anomaly.IsBurstDetection ? " [burst-mode]" : "";
-                string tripwireTag = anomaly.TripwireFired ? " [tripwire]" : "";
+                string ShortLivedBurstTag = anomaly.ShortLivedBurstFired ? " [ShortLivedBurst]" : "";
                 AnomalyConfidenceTier anomalyTier = GetAnomalyConfidenceTier(anomaly);
                 ThreatImpact knnImpact = ComputeIndependentKnnImpact(anomaly, anomalyTier);
 
@@ -315,7 +316,7 @@ namespace Cyber_behaviour_profiling
                     }
 
                     report.DecisionReasons.Add(
-                        $"  [{labelText}] Anomaly detector (KNN){burstTag}{tripwireTag}{baselineTag}: {messageBody}.{statsText}{focusNote}");
+                        $"  [{labelText}] Anomaly detector (KNN){burstTag}{ShortLivedBurstTag}{baselineTag}: {messageBody}.{statsText}{focusNote}");
 
                     if (knnImpact > highestImpact) highestImpact = knnImpact;
                     firedCount++;
@@ -429,7 +430,7 @@ namespace Cyber_behaviour_profiling
                     chainResult.HasHardIndicator = true;
             }
 
-            if (!anomaly.TripwireFired && !chainResult.HasHardIndicator && !hasBehavioralRedFlag && trustMult <= 0.6)
+            if (!anomaly.ShortLivedBurstFired && !chainResult.HasHardIndicator && !hasBehavioralRedFlag && trustMult <= 0.6)
             {
                 if (highestImpact == ThreatImpact.Malicious)
                 {
@@ -538,7 +539,7 @@ namespace Cyber_behaviour_profiling
             if (!anomaly.AnomalyDetected)
                 return ThreatImpact.Safe;
 
-            if (anomaly.TripwireFired)
+            if (anomaly.ShortLivedBurstFired)
                 return ThreatImpact.Suspicious;
 
             if (!anomaly.BaselineUsed)
@@ -562,9 +563,10 @@ namespace Cyber_behaviour_profiling
             IReadOnlyCollection<SuspiciousEvent> events,
             ProcessProfile profile)
         {
-            _ = profile;
+            bool treatCredentialFileAccessAsHard = !MapToData.IsKnownBrowserProcessName(profile.ProcessName);
 
-            if (HasHardHighRiskEvents(events) && (anomaly.BaselineUsed || anomaly.TripwireFired))
+            if (HasHardHighRiskEvents(events, treatCredentialFileAccessAsHard) &&
+                (anomaly.BaselineUsed || anomaly.ShortLivedBurstFired))
                 return true;
 
             return false;
@@ -750,14 +752,14 @@ namespace Cyber_behaviour_profiling
             return reasons;
         }
 
-        private static bool IsHardIndicatorEvent(SuspiciousEvent ev)
+        private static bool IsHardIndicatorEvent(SuspiciousEvent ev, bool treatCredentialFileAccessAsHard)
         {
             if (ev.EventType is "DPAPI_Decrypt" or "AccessibilityBinaryOverwrite"
                     or "LsassAccess" or "RemoteThreadInjection" or "ProcessTampering")
                 return true;
             if (ev.EventType is "NetworkConnect" or "DNS_Query")
                 return ev.Category is "network_c2" or "dns_c2";
-            if (IsHardCredentialCollectionEvent(ev))
+            if (IsHardCredentialCollectionEvent(ev, treatCredentialFileAccessAsHard))
                 return true;
             return false;
         }
@@ -771,8 +773,9 @@ namespace Cyber_behaviour_profiling
             return raw.Contains("\\protect\\") || raw.Contains("\\credentials\\") || raw.Contains("\\vault\\");
         }
 
-        private static bool IsHardCredentialCollectionEvent(SuspiciousEvent ev) =>
-            ev.Category is "credential_file_access" or "registry_credential_access" or "lsass_access";
+        private static bool IsHardCredentialCollectionEvent(SuspiciousEvent ev, bool treatCredentialFileAccessAsHard = true) =>
+            ev.Category is "registry_credential_access" or "lsass_access" ||
+            (treatCredentialFileAccessAsHard && ev.Category == "credential_file_access");
 
         private static bool IsCredentialCollectionEvent(SuspiciousEvent ev) =>
             IsHardCredentialCollectionEvent(ev) ||
@@ -782,20 +785,43 @@ namespace Cyber_behaviour_profiling
             events.Any(e => e.EventType is "LsassAccess" or "DPAPI_Decrypt") ||
             events.Any(IsCredentialCollectionEvent);
 
-        private static bool HasHighRiskEventEvidence(IReadOnlyCollection<SuspiciousEvent> events) =>
+        private static bool HasHighRiskEventEvidence(
+            IReadOnlyCollection<SuspiciousEvent> events,
+            bool treatCredentialFileAccessAsHard = true) =>
             events.Any(e => e.EventType is "DPAPI_Decrypt" or "LsassAccess" or "RemoteThreadInjection" or
                 "ProcessTampering" or "AccessibilityBinaryOverwrite") ||
-            events.Any(e => e.Category is "credential_file_access" or "registry_credential_access" or "lsass_access" or
-                "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
-                "process_injection" or "process_tampering" or "network_c2" or "dns_c2") ||
+            events.Any(e =>
+                ((treatCredentialFileAccessAsHard && e.Category == "credential_file_access") ||
+                 e.Category is "registry_credential_access" or "lsass_access" or
+                    "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
+                    "process_injection" or "process_tampering" or "network_c2" or "dns_c2")) ||
             events.Any(IsSensitiveVaultAccessEvent);
 
-        private static bool HasHardHighRiskEvents(IReadOnlyCollection<SuspiciousEvent> events) =>
+        private static bool HasHardHighRiskEvents(
+            IReadOnlyCollection<SuspiciousEvent> events,
+            bool treatCredentialFileAccessAsHard = true) =>
             events.Any(e => e.EventType is "DPAPI_Decrypt" or "LsassAccess" or "RemoteThreadInjection" or
                 "ProcessTampering" or "AccessibilityBinaryOverwrite") ||
-            events.Any(e => e.Category is "credential_file_access" or "registry_credential_access" or "lsass_access" or
-                "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
-                "process_injection" or "process_tampering" or "network_c2" or "dns_c2");
+            events.Any(e =>
+                ((treatCredentialFileAccessAsHard && e.Category == "credential_file_access") ||
+                 e.Category is "registry_credential_access" or "lsass_access" or
+                    "registry_persistence" or "registry_defense_evasion" or "registry_privilege_escalation" or
+                    "process_injection" or "process_tampering" or "network_c2" or "dns_c2"));
+
+        private static bool IsKnownBrowserProcess(ProcessProfile profile, ProcessContext? ctx)
+        {
+            if (MapToData.IsKnownBrowserProcessName(profile.ProcessName))
+                return true;
+
+            if (ctx != null)
+            {
+                string fileName = Path.GetFileName(ctx.FilePath);
+                if (MapToData.IsKnownBrowserProcessName(fileName))
+                    return true;
+            }
+
+            return false;
+        }
 
         private static bool HasSuspiciousExecutionEvidence(IReadOnlyCollection<SuspiciousEvent> events) =>
             events.Any(e => e.EventType is "SuspiciousCommand" or "DiscoverySpawn" or "DPAPI_Decrypt" or
@@ -1272,7 +1298,8 @@ namespace Cyber_behaviour_profiling
             if (isKnownSystemBinary)
                 return false;
 
-            bool hasHardOrCredentialSignals = HasHighRiskEventEvidence(events);
+            bool treatCredentialFileAccessAsHard = !MapToData.IsKnownBrowserProcessName(profile.ProcessName);
+            bool hasHardOrCredentialSignals = HasHighRiskEventEvidence(events, treatCredentialFileAccessAsHard);
 
             bool hasSuspiciousExecution = HasSuspiciousExecutionEvidence(events) ||
                 HasSuspiciousCommandContext(profile) ||
@@ -1299,7 +1326,8 @@ namespace Cyber_behaviour_profiling
             if (!hasGenericOutbound)
                 return false;
 
-            bool hasHardOrCredentialSignals = HasHighRiskEventEvidence(events);
+            bool treatCredentialFileAccessAsHard = !MapToData.IsKnownBrowserProcessName(profile.ProcessName);
+            bool hasHardOrCredentialSignals = HasHighRiskEventEvidence(events, treatCredentialFileAccessAsHard);
 
             bool hasSuspiciousExecution = HasSuspiciousExecutionEvidence(events) ||
                 HasSuspiciousCommandContext(profile) ||
@@ -1375,7 +1403,10 @@ namespace Cyber_behaviour_profiling
                 $"{discoveryTools.Count} reconnaissance tools executed: {string.Join(", ", discoveryTools.Take(8))}");
         }
 
-        private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(List<SuspiciousEvent> events, ProcessProfile profile)
+        private static IEnumerable<SemanticCheck> CheckSystemAreaFootprint(
+            List<SuspiciousEvent> events,
+            ProcessProfile profile,
+            bool isKnownBrowserProcess)
         {
             var areas = new HashSet<string>();
 
@@ -1424,7 +1455,7 @@ namespace Cyber_behaviour_profiling
                 ThreatImpact.Malicious, "Accessed Windows credential vault");
 
             bool browserCredAccess = areas.Contains("BrowserCredentials");
-            bool isOwnBrowser = MapToData._browserProcesses.Contains(profile.ProcessName ?? "");
+            bool isOwnBrowser = isKnownBrowserProcess;
             yield return Check(SemanticCheckId.BrowserCredentialAccess,
                 browserCredAccess && !isOwnBrowser,
                 ThreatImpact.Malicious,

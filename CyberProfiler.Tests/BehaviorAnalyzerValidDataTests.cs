@@ -110,6 +110,28 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
+    public void BrowserProcess_AccessingBrowserCredentialPath_DoesNotTriggerNonBrowserCredentialTheft()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.Empty("msedge.exe", 2_100_000_051);
+
+            ProfileFactory.AddEvent(
+                profile,
+                "FileRead",
+                "Login Data",
+                @"C:\Users\user\AppData\Local\Microsoft\Edge\User Data\Default\Login Data",
+                "credential_file_access");
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.DoesNotContain(report.FiredCheckNames, n =>
+                n.Equals("Browser Credential Access", StringComparison.OrdinalIgnoreCase));
+            Assert.NotEqual(ThreatImpact.Malicious, report.FinalVerdict);
+        }, loadData: true);
+    }
+
+    [Fact]
     public void BaselineNearMatch_RemainsSafeAndUsesBaseline()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>
@@ -142,7 +164,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NoBaselineSensitiveTripwire_DefaultsToSuspicious()
+    public void NoBaselineSensitiveShortLivedBurst_DefaultsToSuspicious()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
 
@@ -156,10 +178,10 @@ public class BehaviorAnalyzerValidDataTests
             var report = BehaviorAnalyzer.Analyze(profile);
 
             Assert.NotNull(report.Anomaly);
-            Assert.True(report.Anomaly!.TripwireFired);
+            Assert.True(report.Anomaly!.ShortLivedBurstFired);
             Assert.Equal(ThreatImpact.Suspicious, report.FinalVerdict);
             Assert.Contains(report.DecisionReasons, reason =>
-                reason.Contains("tripwire", StringComparison.OrdinalIgnoreCase));
+                reason.Contains("ShortLivedBurst", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
@@ -168,14 +190,14 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NoBaselineTripwireWithHardHighRiskEvents_EscalatesToMalicious()
+    public void NoBaselineShortLivedBurstWithHardHighRiskEvents_EscalatesToMalicious()
     {
         var anomaly = new AnomalyResult
         {
             AnomalyDetected = true,
             BaselineUsed = false,
-            TripwireFired = true,
-            TripwireReason = "Sensitive Access Rate 10.0/sec exceeded tripwire 4.0/sec",
+            ShortLivedBurstFired = true,
+            ShortLivedBurstReason = "Sensitive Access Rate 10.0/sec exceeded ShortLivedBurst 4.0/sec",
             Score = 36
         };
 
