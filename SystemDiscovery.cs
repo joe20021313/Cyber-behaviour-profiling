@@ -271,29 +271,41 @@ namespace Cyber_behaviour_profiling
                 if (IsNoise(file.FullPath)) continue;
 
                 string ext = Path.GetExtension(file.FullPath).ToLowerInvariant();
-                if (MapToData._executableExtensions.Contains(ext))
+                if (!MapToData._executableExtensions.Contains(ext)) continue;
+
+                bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
+                InvestigationLog.Write($"  Modified executable: {file.FullPath}");
+
+                if (supportsEmbeddedSignature)
                 {
-                    bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
-                    InvestigationLog.Write($"  [WARNING] Modified executable: {file.FullPath}");
+                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
+                    InvestigationLog.Write($"          Trust={signature.ShortLabel}");
+
+                    if (signature.TrustState != SignatureTrustState.InvalidSignature &&
+                        signature.TrustState != SignatureTrustState.Revoked)
+                        continue;
 
                     var finding = new InvestigationFinding
                     {
-                        Description = supportsEmbeddedSignature
-                            ? $"Binary modified during monitoring: {file.FullPath}"
-                            : $"Script modified during monitoring: {file.FullPath}",
+                        Description = $"Binary with fake/tampered signature modified during monitoring: {file.FullPath} (trust: {signature.ShortLabel})",
+                        ArtifactPath = file.FullPath,
+                        Severity = FindingSeverity.Alert
+                    };
+                    finding.Children.Add(new InvestigationFinding
+                    {
+                        Description = signature.Summary,
+                        Severity = FindingSeverity.Alert
+                    });
+                    result.Findings.Add(finding);
+                }
+                else
+                {
+                    result.Findings.Add(new InvestigationFinding
+                    {
+                        Description = $"Script modified during monitoring: {file.FullPath}",
                         ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Warning
-                    };
-
-                    if (supportsEmbeddedSignature)
-                    {
-                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                        InvestigationLog.Write($"          Trust={signature.ShortLabel}");
-                        finding.Description += $" (trust: {signature.ShortLabel})";
-                        AppendSignatureContext(finding, signature, elevateTrustFailures: true);
-                    }
-
-                    result.Findings.Add(finding);
+                    });
                 }
             }
 
@@ -561,28 +573,16 @@ namespace Cyber_behaviour_profiling
             SignatureVerificationResult signature,
             bool elevateTrustFailures)
         {
-            switch (signature.TrustState)
+            if (signature.TrustState == SignatureTrustState.InvalidSignature ||
+                signature.TrustState == SignatureTrustState.Revoked)
             {
-                case SignatureTrustState.TrustedPublisherVerified:
-                case SignatureTrustState.ValidSignatureUntrustedPublisher:
-                    finding.Children.Add(new InvestigationFinding
-                    {
-                        Description = signature.Summary,
-                        Severity = FindingSeverity.Info
-                    });
-                    break;
-
-                case SignatureTrustState.InvalidSignature:
-                case SignatureTrustState.Revoked:
-                case SignatureTrustState.RevocationCheckFailed:
-                    finding.Children.Add(new InvestigationFinding
-                    {
-                        Description = signature.Summary,
-                        Severity = FindingSeverity.Alert
-                    });
-                    if (elevateTrustFailures)
-                        finding.Severity = FindingSeverity.Alert;
-                    break;
+                finding.Children.Add(new InvestigationFinding
+                {
+                    Description = signature.Summary,
+                    Severity = FindingSeverity.Alert
+                });
+                if (elevateTrustFailures)
+                    finding.Severity = FindingSeverity.Alert;
             }
         }
 
