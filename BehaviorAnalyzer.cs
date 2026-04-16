@@ -24,6 +24,7 @@ namespace Cyber_behaviour_profiling
         SystemProcessNotInSystem32,
         SpawnedBySuspiciousParent,
         OfficeAppSpawnedShellOrTool,
+        BrowserSpawnedByNonShellParent,
         DeepAncestryChain,
         EncodedOrObfuscatedCommand,
         ExecutionPolicyOrProfileBypass,
@@ -188,8 +189,10 @@ namespace Cyber_behaviour_profiling
 
             ProcessContext ctx = GatherSystemContext(profile);
             bool isKnownBrowserProcess = IsKnownBrowserProcess(profile, ctx);
+            bool browserLaunchedByOtherProgram = IsBrowserLaunchedByOtherProgram(profile, ctx, isKnownBrowserProcess);
+            bool browserBenignMode = isKnownBrowserProcess && !browserLaunchedByOtherProgram;
 
-            bool hasBehavioralRedFlag = HasBehavioralRedFlag(profile, ctx);
+            bool hasBehavioralRedFlag = HasBehavioralRedFlag(profile, ctx, browserBenignMode);
 
             bool claimsTrustedName = nameNoExt.Length >= 3 &&
                 (MapToData._trustedSystem.Any(t =>
@@ -210,7 +213,7 @@ namespace Cyber_behaviour_profiling
             var checks = new List<SemanticCheck>();
             checks.AddRange(CheckBinaryProvenance(ctx, profile));
             checks.AddRange(CheckSysmonEvents(events));
-            checks.AddRange(CheckParent(ctx, profile));
+            checks.AddRange(CheckParent(ctx, profile, browserLaunchedByOtherProgram));
             checks.AddRange(CheckSuspiciousCommandSemantics(profile));
             checks.AddRange(CheckRuntimeAnomalies(ctx, events, profile, netInvestigation));
             checks.AddRange(CheckVelocityAndDensity(events));
@@ -218,9 +221,9 @@ namespace Cyber_behaviour_profiling
             checks.AddRange(CheckTemporalAnomalies(events, ctx));
             checks.AddRange(CheckContextFolderBehavior(ctx, events, profile));
             checks.AddRange(CheckExecutableDrops(ctx, events, profile));
-            checks.AddRange(CheckFileChurnBehavior(ctx, profile));
+            checks.AddRange(CheckFileChurnBehavior(ctx, profile, browserBenignMode));
             checks.AddRange(CheckDirectoryScatter(ctx, profile));
-            checks.AddRange(CheckSelfDeletion(ctx, profile));
+            checks.AddRange(CheckSelfDeletion(ctx, profile, browserBenignMode));
 
             var anomaly = AnomalyDetector.Evaluate(profile, ctx);
 
@@ -455,10 +458,17 @@ namespace Cyber_behaviour_profiling
 
             if (highestImpact == ThreatImpact.Inconclusive &&
                 grantsTrustedLeeway &&
+                !browserLaunchedByOtherProgram &&
                 firedCount < 8)
             {
                 highestImpact = ThreatImpact.Safe;
                 report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Safe)}] Process verified as safe: trusted publisher identity '{ctx.SignerName}' passed signature and revocation validation.");
+            }
+
+            if (browserLaunchedByOtherProgram && highestImpact == ThreatImpact.Safe)
+            {
+                highestImpact = ThreatImpact.Inconclusive;
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Inconclusive)}] Browser-safe suppression disabled because this browser instance was launched by another program.");
             }
 
             report.FinalVerdict = highestImpact;
@@ -823,6 +833,98 @@ namespace Cyber_behaviour_profiling
             return false;
         }
 
+        private static string ResolveParentProcessName(ProcessProfile profile, ProcessContext ctx)
+        {
+            if (!string.IsNullOrWhiteSpace(profile.ParentProcessNameAtSpawn))
+                return profile.ParentProcessNameAtSpawn;
+
+            return ctx.ParentProcess ?? "UNKNOWN";
+        }
+
+        private static string NormalizeProcessNameNoExtension(string? processName)
+        {
+            if (string.IsNullOrWhiteSpace(processName))
+                return "";
+
+            string candidate = processName.Trim().Trim('"');
+            int firstSpace = candidate.IndexOf(' ');
+            if (firstSpace > 0)
+                candidate = candidate[..firstSpace];
+
+            candidate = Path.GetFileName(candidate);
+            candidate = Path.GetFileNameWithoutExtension(candidate);
+            return candidate.ToLowerInvariant();
+        }
+
+        private static bool IsGenericShellProcess(string? processName)
+        {
+            if (string.IsNullOrWhiteSpace(processName))
+                return false;
+
+            if (MapToData.GenericShells.Contains(processName))
+                return true;
+
+            string normalized = NormalizeProcessNameNoExtension(processName);
+            return !string.IsNullOrWhiteSpace(normalized) &&
+                   (MapToData.GenericShells.Contains(normalized) ||
+                    MapToData.GenericShells.Contains(normalized + ".exe"));
+        }
+
+        private static bool IsTrustedSystemProcessName(string? processName)
+        {
+            string normalized = NormalizeProcessNameNoExtension(processName);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            return MapToData._trustedSystem.Any(t =>
+                Path.GetFileNameWithoutExtension(t)
+                    .Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsShellOrSystemLauncher(ProcessProfile profile, ProcessContext ctx)
+        {
+            string parentName = ResolveParentProcessName(profile, ctx);
+            if (string.IsNullOrWhiteSpace(parentName) ||
+                parentName.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase) ||
+                ctx.ParentIsSuspicious)
+            {
+                return false;
+            }
+
+            if (IsGenericShellProcess(parentName))
+                return true;
+
+            if (!IsTrustedSystemProcessName(parentName))
+                return false;
+
+            if (string.IsNullOrWhiteSpace(ctx.ParentFilePath) ||
+                ctx.ParentFilePath.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return ctx.ParentFilePath.StartsWith(@"c:\windows\", StringComparison.OrdinalIgnoreCase) ||
+                   ctx.ParentIsTrustedPublisher;
+        }
+
+        private static bool IsBrowserLaunchedByOtherProgram(
+            ProcessProfile profile,
+            ProcessContext ctx,
+            bool isKnownBrowserProcess)
+        {
+            if (!isKnownBrowserProcess)
+                return false;
+
+            string parentName = ResolveParentProcessName(profile, ctx);
+            if (string.IsNullOrWhiteSpace(parentName) ||
+                parentName.Equals("UNKNOWN", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return !IsShellOrSystemLauncher(profile, ctx);
+        }
+
         private static bool HasSuspiciousExecutionEvidence(IReadOnlyCollection<SuspiciousEvent> events) =>
             events.Any(e => e.EventType is "SuspiciousCommand" or "DiscoverySpawn" or "DPAPI_Decrypt" or
                 "LsassAccess" or "RemoteThreadInjection" or "ProcessTampering");
@@ -1113,7 +1215,10 @@ namespace Cyber_behaviour_profiling
                 ThreatImpact.Malicious, $"'{profile.ProcessName}' running from non-system location: {ctx.FilePath}");
         }
 
-        private static IEnumerable<SemanticCheck> CheckParent(ProcessContext ctx, ProcessProfile profile)
+        private static IEnumerable<SemanticCheck> CheckParent(
+            ProcessContext ctx,
+            ProcessProfile profile,
+            bool browserLaunchedByOtherProgram)
         {
             yield return Check(SemanticCheckId.SpawnedBySuspiciousParent,
                 ctx.ParentIsSuspicious,
@@ -1125,6 +1230,11 @@ namespace Cyber_behaviour_profiling
                 (procName.Contains("cmd") || procName.Contains("powershell") ||
                  procName.Contains("wscript") || procName.Contains("cscript")),
                 ThreatImpact.Malicious, $"Office app '{ctx.ParentProcess}' spawned scripting tool '{profile.ProcessName}'");
+
+            yield return Check(SemanticCheckId.BrowserSpawnedByNonShellParent,
+                browserLaunchedByOtherProgram,
+                ThreatImpact.Inconclusive,
+                $"Browser process '{profile.ProcessName}' was launched by '{ResolveParentProcessName(profile, ctx)}'. Browser-specific benign suppression is disabled in this launch context.");
 
             bool deepChain = ctx.AncestorChain.Count >= 4;
 
@@ -1303,7 +1413,7 @@ namespace Cyber_behaviour_profiling
 
             bool hasSuspiciousExecution = HasSuspiciousExecutionEvidence(events) ||
                 HasSuspiciousCommandContext(profile) ||
-                HasBehavioralRedFlag(profile, ctx);
+                HasBehavioralRedFlag(profile, ctx, browserBenignMode: false);
 
             return ctx.IsSuspiciousPath ||
                    ctx.ParentIsSuspicious ||
@@ -1716,7 +1826,9 @@ namespace Cyber_behaviour_profiling
         }
 
         private static IEnumerable<SemanticCheck> CheckFileChurnBehavior(
-            ProcessContext ctx, ProcessProfile profile)
+            ProcessContext ctx,
+            ProcessProfile profile,
+            bool browserBenignMode)
         {
             int writes = Math.Max(0, profile.TotalFileWrites - profile.TotalRuntimeArtifactWrites);
             int deletes = Math.Max(0, profile.TotalFileDeletes - profile.TotalRuntimeArtifactDeletes);
@@ -1725,13 +1837,17 @@ namespace Cyber_behaviour_profiling
             double runtime = Math.Max(ctx.UptimeSeconds, 1.0);
             double churnRate = total / runtime;
 
+            int churnDeleteThreshold = browserBenignMode ? 40 : 5;
+            double churnRateThreshold = browserBenignMode ? 80 : 10;
+            int excessiveDeleteThreshold = browserBenignMode ? 250 : 20;
+
             yield return Check(SemanticCheckId.HighFileCreateDeleteChurn,
-                deletes >= 5 && churnRate > 10,
+                deletes >= churnDeleteThreshold && churnRate > churnRateThreshold,
                 ThreatImpact.Suspicious,
                 $"{writes} writes, {deletes} deletes at {churnRate:F0} ops/sec");
 
             yield return Check(SemanticCheckId.ExcessiveFileDeletion,
-                deletes >= 20,
+                deletes >= excessiveDeleteThreshold,
                 ThreatImpact.Suspicious,
                 $"{deletes} files deleted");
         }
@@ -1791,7 +1907,9 @@ namespace Cyber_behaviour_profiling
         }
 
         private static IEnumerable<SemanticCheck> CheckSelfDeletion(
-            ProcessContext ctx, ProcessProfile profile)
+            ProcessContext ctx,
+            ProcessProfile profile,
+            bool browserBenignMode)
         {
             string ownPath = (ctx.FilePath ?? "UNKNOWN").ToLowerInvariant();
             string ownName = Path.GetFileName(ownPath);
@@ -1807,6 +1925,7 @@ namespace Cyber_behaviour_profiling
             var deletedExes = profile.DeletedPaths
                 .Where(p => MapToData._executableExtensions.Contains(Path.GetExtension(p)))
                 .Where(p => !MapToData.IsRuntimeArtifactPath(p))
+                .Where(p => !browserBenignMode || IsBinaryExecutableExtension(p))
                 .Where(p =>
                 {
                     var fn = Path.GetFileName(p).ToLowerInvariant();
@@ -1829,13 +1948,29 @@ namespace Cyber_behaviour_profiling
                 isHardIndicator: true);
         }
 
-        private static bool HasBehavioralRedFlag(ProcessProfile profile, ProcessContext ctx)
+        private static bool IsBinaryExecutableExtension(string path)
+        {
+            string ext = Path.GetExtension(path);
+            return ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                   ext.Equals(".dll", StringComparison.OrdinalIgnoreCase) ||
+                   ext.Equals(".scr", StringComparison.OrdinalIgnoreCase) ||
+                   ext.Equals(".pif", StringComparison.OrdinalIgnoreCase) ||
+                   ext.Equals(".com", StringComparison.OrdinalIgnoreCase) ||
+                   ext.Equals(".msi", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasBehavioralRedFlag(
+            ProcessProfile profile,
+            ProcessContext ctx,
+            bool browserBenignMode)
         {
             string processNameNoExt = Path.GetFileNameWithoutExtension(
                 profile.ProcessName?.ToLowerInvariant() ?? "");
 
             if (profile.ExeDropPaths != null && profile.ExeDropPaths.Keys.Any(p =>
-                IsSuspiciousDropPath(p) && !IsSelfUpdate(p, processNameNoExt)))
+                IsSuspiciousDropPath(p) &&
+                !IsSelfUpdate(p, processNameNoExt) &&
+                (!browserBenignMode || IsBinaryExecutableExtension(p))))
                 return true;
 
             if (profile.DeletedPaths != null)
@@ -1845,6 +1980,9 @@ namespace Cyber_behaviour_profiling
                     string fn = Path.GetFileName(p).ToLowerInvariant();
                     bool isExe = MapToData._executableExtensions.Contains(Path.GetExtension(p));
                     bool isBenign = MapToData._benignDropPrefixes.Any(pfx => fn.StartsWith(pfx));
+                    if (browserBenignMode && !IsBinaryExecutableExtension(p))
+                        continue;
+
                     if (isExe && !isBenign && !MapToData.IsRuntimeArtifactPath(p) && IsSuspiciousDropPath(p))
                         return true;
                 }
@@ -2300,6 +2438,7 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.SystemProcessNotInSystem32 => "System Process Not in System32",
             SemanticCheckId.SpawnedBySuspiciousParent => "Spawned by Suspicious Parent",
             SemanticCheckId.OfficeAppSpawnedShellOrTool => "Office App Spawned Shell/Tool",
+            SemanticCheckId.BrowserSpawnedByNonShellParent => "Browser Spawned by Non-Shell Parent",
             SemanticCheckId.DeepAncestryChain => "Deep Ancestry Chain",
             SemanticCheckId.EncodedOrObfuscatedCommand => "Encoded or Obfuscated Command",
             SemanticCheckId.ExecutionPolicyOrProfileBypass => "Execution Policy or Profile Bypass",

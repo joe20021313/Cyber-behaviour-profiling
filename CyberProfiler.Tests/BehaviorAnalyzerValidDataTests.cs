@@ -132,6 +132,64 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
+    public void BrowserUserLaunch_HighChurnAndScriptCleanup_CanRemainSafe()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.Empty("msedge.exe", 2_100_000_052);
+            profile.ParentProcessNameAtSpawn = "explorer.exe";
+            profile.TotalFileWrites = 640;
+            profile.TotalFileDeletes = 90;
+            profile.DeletedPaths.Add(@"C:\Users\user\AppData\Local\Microsoft\Edge\User Data\Default\Code Cache\js1.js");
+            profile.DeletedPaths.Add(@"C:\Users\user\AppData\Local\Microsoft\Edge\User Data\Default\Code Cache\js2.js");
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.Equal(ThreatImpact.Safe, report.FinalVerdict);
+            Assert.DoesNotContain(report.FiredCheckNames, n =>
+                n.Equals("Executable File Deleted", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(report.FiredCheckNames, n =>
+                n.Equals("High File Create-Delete Churn", StringComparison.OrdinalIgnoreCase));
+        }, loadData: true);
+    }
+
+    [Fact]
+    public void BrowserLaunchedByProgram_IsNeverAutoSafe()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.Empty("msedge.exe", 2_100_000_053);
+            profile.ParentProcessNameAtSpawn = "notepad.exe";
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.NotEqual(ThreatImpact.Safe, report.FinalVerdict);
+            Assert.Contains(report.FiredCheckNames, n =>
+                n.Equals("Browser Spawned by Non-Shell Parent", StringComparison.OrdinalIgnoreCase));
+        }, loadData: true);
+    }
+
+    [Fact]
+    public void NonBrowserHighChurnAndScriptCleanup_DoesNotUseBrowserSafePath()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.Empty("testapp.exe", 2_100_000_054);
+            profile.ParentProcessNameAtSpawn = "explorer.exe";
+            profile.TotalFileWrites = 640;
+            profile.TotalFileDeletes = 90;
+            profile.DeletedPaths.Add(@"C:\Users\user\AppData\Local\Temp\run1.js");
+            profile.DeletedPaths.Add(@"C:\Users\user\AppData\Local\Temp\run2.js");
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.NotEqual(ThreatImpact.Safe, report.FinalVerdict);
+            Assert.Contains(report.FiredCheckNames, n =>
+                n.Equals("Executable File Deleted", StringComparison.OrdinalIgnoreCase));
+        }, loadData: true);
+    }
+
+    [Fact]
     public void BaselineNearMatch_RemainsSafeAndUsesBaseline()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>
