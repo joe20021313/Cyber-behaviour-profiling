@@ -27,12 +27,17 @@ jobs:
         run: dotnet restore Cyber-behaviour-profiling.sln
 
       - name: SCA (vulnerable packages)
-        run: dotnet list package --vulnerable --include-transitive 2>&1 | Tee-Object -FilePath sca.log
-        continue-on-error: true
+        shell: pwsh
+        run: |
+          $output = dotnet list package --vulnerable --include-transitive 2>&1
+          $output | Tee-Object -FilePath sca.log
+          if ($output -match "has the following vulnerable packages") {
+            Write-Error "Vulnerable packages detected — see sca.log"
+            exit 1
+          }
 
       - name: Lint
         run: dotnet format Cyber-behaviour-profiling.sln --verify-no-changes 2>&1 | Tee-Object -FilePath lint.log
-        continue-on-error: true
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3

@@ -344,8 +344,10 @@ namespace Cyber_behaviour_profiling
             double[] candidate, List<double[]> sessionHistory, ProcessBaseline? baseline)
         {
             var result = new AnomalyResult();
-            bool allowShortLivedBurst = baseline == null;
-            if (allowShortLivedBurst && TryEvaluateShortLivedBurst(candidate, out string ShortLivedBurstReason, out int ShortLivedBurstMetric,
+            
+            
+            double burstMinRatio = baseline != null ? 1.5 : 1.0;
+            if (TryEvaluateShortLivedBurst(candidate, burstMinRatio, out string ShortLivedBurstReason, out int ShortLivedBurstMetric,
                 out double ShortLivedBurstValue, out double ShortLivedBurstThreshold))
             {
                 result.AnomalyDetected = true;
@@ -427,6 +429,7 @@ namespace Cyber_behaviour_profiling
 
         private static bool TryEvaluateShortLivedBurst(
             IReadOnlyList<double> candidate,
+            double minRatio,
             out string reason,
             out int metricIndex,
             out double metricValue,
@@ -438,7 +441,7 @@ namespace Cyber_behaviour_profiling
             threshold = 0.0;
 
             int dims = Math.Min(candidate.Count, Math.Min(MetricNames.Length, ShortLivedBurstThresholds.Length));
-            double strongestRatio = 1.0;
+            double strongestRatio = minRatio;
 
             for (int i = 0; i < dims; i++)
             {
@@ -447,10 +450,10 @@ namespace Cyber_behaviour_profiling
                     continue;
 
                 double value = candidate[i];
-                if (value < currentThreshold)
+                double ratio = value / currentThreshold;
+                if (ratio < minRatio)
                     continue;
 
-                double ratio = value / currentThreshold;
                 if (metricIndex == -1 || ratio > strongestRatio)
                 {
                     metricIndex = i;

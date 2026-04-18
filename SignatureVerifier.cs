@@ -28,21 +28,22 @@ namespace Cyber_behaviour_profiling
         public string IssuerName { get; init; } = "";
         public string Thumbprint { get; init; } = "";
         public string Summary { get; init; } = "No digital signature present.";
+        public uint HResult { get; init; }
 
         public bool AllowsTrustDampening => TrustState == SignatureTrustState.TrustedPublisherVerified;
 
         public string ShortLabel => TrustState switch
         {
             SignatureTrustState.TrustedPublisherVerified => string.IsNullOrWhiteSpace(PublisherName)
-                ? "trusted signature verified"
-                : $"trusted signature verified ({PublisherName})",
+                ? "safe (trusted maker)"
+                : $"safe (made by {PublisherName})",
             SignatureTrustState.ValidSignatureUntrustedPublisher => string.IsNullOrWhiteSpace(PublisherName)
-                ? "valid signature present (publisher not trusted)"
-                : $"valid signature present ({PublisherName}; publisher not trusted)",
-            SignatureTrustState.Revoked => "signature revoked",
-            SignatureTrustState.RevocationCheckFailed => "signature present but revocation could not be verified",
-            SignatureTrustState.InvalidSignature => "signature present but trust validation failed",
-            _ => "no signature present"
+                ? "signed (but maker is unknown)"
+                : $"signed (by {PublisherName}; maker is unknown)",
+            SignatureTrustState.Revoked => "signature is broken/cancelled",
+            SignatureTrustState.RevocationCheckFailed => "signed, but we couldn't check if it was cancelled",
+            SignatureTrustState.InvalidSignature => "signed, but the signature looks fake",
+            _ => "no signature found"
         };
     }
 
@@ -158,7 +159,8 @@ namespace Cyber_behaviour_profiling
                     publisherName,
                     issuerName,
                     thumbprint,
-                    BuildRevokedSummary(publisherName));
+                    BuildRevokedSummary(publisherName),
+                    hresult: authResult);
             }
 
             bool chainRevoked = false;
@@ -181,7 +183,8 @@ namespace Cyber_behaviour_profiling
                     publisherName,
                     issuerName,
                     thumbprint,
-                    BuildRevokedSummary(publisherName));
+                    BuildRevokedSummary(publisherName),
+                    hresult: authResult);
             }
 
             if (revocationUnknown)
@@ -208,7 +211,8 @@ namespace Cyber_behaviour_profiling
                     publisherName,
                     issuerName,
                     thumbprint,
-                    BuildInvalidSignatureSummary(publisherName));
+                    BuildInvalidSignatureSummary(publisherName),
+                    hresult: authResult);
             }
 
             bool trustedPublisher = MatchesTrustedPublisher(publisherName);
@@ -235,7 +239,8 @@ namespace Cyber_behaviour_profiling
             string publisherName,
             string issuerName,
             string thumbprint,
-            string summary) =>
+            string summary,
+            uint hresult = 0) =>
             new()
             {
                 TrustState = trustState,
@@ -245,7 +250,8 @@ namespace Cyber_behaviour_profiling
                 PublisherName = publisherName,
                 IssuerName = issuerName,
                 Thumbprint = thumbprint,
-                Summary = summary
+                Summary = summary,
+                HResult = hresult
             };
 
         private static string BuildTrustedPublisherSummary(string publisherName) =>

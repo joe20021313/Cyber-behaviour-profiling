@@ -738,7 +738,7 @@ public static class MapToData
 
         var overwriteRule = _overwriteRules.FirstOrDefault(o => fileName.Contains(o.Pattern));
         if (overwriteRule != null)
-            AddEventToProfile(pid, processName, "AccessibilityBinaryOverwrite", overwriteRule.Pattern, filePath, overwriteRule.Category, eventType);
+            AddEventToProfile(pid, processName, "AccessibilityProgramOverwrite", overwriteRule.Pattern, filePath, overwriteRule.Category, eventType);
     }
 
     public static void EvaluateRegistryAccess(int pid, string processName, string registryKey, string operation = "Open")

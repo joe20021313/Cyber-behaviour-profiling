@@ -597,7 +597,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     "PowerShell ScriptBlock logging is not enabled.\n\n" +
                     "Enable it?\n\n" +
                     "This writes a policy registry key under HKLM and requires admin rights." +
-                    "Process spawns will still be monitored regardless.",
+                    "Process spawns will still be monitored regardless and this will be reverted back once monitoring is stopped. You can permanently enable it in the settings.",
                     "Enable PowerShell Detection",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);

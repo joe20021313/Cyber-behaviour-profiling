@@ -233,7 +233,7 @@ namespace Cyber_behaviour_profiling
                 "ContextSignal"                                                             => "Info",
                 "FileRead" or "FileWrite" or "FileOpen" or "FileDelete" or "FileRename"
                     or "SensitiveDirAccess" or "UncommonWrite"
-                    or "AccessibilityBinaryOverwrite"
+                    or "AccessibilityProgramOverwrite"
                     or "Executable Drop"                                                    => "File",
                 "Registry"                                                                  => "Registry",
                 "NetworkConnect" or "DNS_Query"                                             => "Network",
@@ -292,7 +292,7 @@ namespace Cyber_behaviour_profiling
             if (raw.Contains("\\vault\\"))
                 return $"Accessed Windows Vault data{reps}";
             if (ind.Contains("sethc") || ind.Contains("utilman") || ind.Contains("osk"))
-                return $"Touched an accessibility binary{reps}";
+                return $"Touched an accessibility program{reps}";
             if (raw.Contains("\\fonts\\"))
                 return $"Wrote into the system fonts folder{reps}";
             if (raw.Contains("\\perflogs\\") || raw.Contains("\\public\\"))
@@ -366,47 +366,47 @@ namespace Cyber_behaviour_profiling
         private static string BuildProcessHeadline(SuspiciousEvent ev, string ind, string reps)
         {
             if (ev.EventType == "LsassAccess")
-                return $"[!!!] Accessed LSASS memory (credential-dump behavior){reps}";
+                return $"[ALERT] Touched Windows passwords memory{reps}";
             if (ev.EventType == "RemoteThreadInjection")
-                return $"[!!!] Injected a remote thread into '{ind}'{reps}";
+                return $"[ALERT] Put its own code inside '{ind}'{reps}";
             if (ev.EventType == "ProcessTampering")
-                return $"[!!!] Process image tampering observed{reps}";
+                return $"[ALERT] Was caught hiding its true identity{reps}";
             if (ev.EventType == "DPAPI_Decrypt")
-                return $"Called DPAPI to decrypt protected data{reps}";
+                return $"Asked Windows for saved keys{reps}";
 
             if (ind.Contains("del") || ind.Contains("remove-item") || ind.Contains("erase"))
-                return $"[!!!] Spawned a delete command{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"[ALERT] Ran a delete command{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("cmd /c copy") || ind.Contains("cmd /c move") || ind.Contains("cmd /c xcopy"))
-                return $"Spawned a file copy/move command{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"Moved files around{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("ping localhost") || ind.Contains("ping 127.0.0.1") ||
                 ind.Contains("timeout") || ind.Contains("choice /c"))
-                return $"[!!!] Delay-then-execute pattern observed{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"[ALERT] Purposely waited before running{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("start /min") || ind.Contains("cmd /c start"))
-                return $"Spawned a hidden/minimized process{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"Launched a hidden program{reps}: '{ShortCmd(ev.RawData)}'";
 
             if (ind.Contains("powershell") || ind.Contains("pwsh"))
-                return $"Launched PowerShell{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"Opened PowerShell{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("cmd.exe"))
-                return $"Launched cmd.exe{reps}: '{ShortCmd(ev.RawData)}'";
+                return $"Opened cmd.exe{reps}: '{ShortCmd(ev.RawData)}'";
             if (ind.Contains("wscript") || ind.Contains("cscript"))
-                return $"Executed a script via Windows Script Host{reps}";
+                return $"Ran a special script file{reps}";
             if (ind.Contains("mshta"))
-                return $"Executed HTA content through mshta.exe{reps}";
+                return $"Opened an internet app file{reps}";
             if (ind.Contains("rundll32"))
-                return $"Executed code via rundll32{reps}";
+                return $"Ran hidden code via rundll32{reps}";
             if (ind.Contains("regsvr32"))
-                return $"Registered or executed a DLL via regsvr32{reps}";
+                return $"Installed an app piece using regsvr32{reps}";
             if (ind.Contains("certutil"))
-                return $"Used certutil.exe{reps}";
+                return $"Used certutil.exe (often used by malware for downloading){reps}";
             if (ind.Contains("whoami") || ind.Contains("systeminfo") ||
                 ind.Contains("ipconfig") || ind.Contains("net.exe"))
-                return $"Ran a system discovery command: '{ind}'{reps}";
+                return $"Asked the system for its settings: '{ind}'{reps}";
             if (ind.Contains("-encodedcommand") || ind.Contains("-enc "))
-                return $"Executed an encoded PowerShell command{reps}";
+                return $"Ran hidden text in PowerShell{reps}";
             if (ind.Contains("-nop") || ind.Contains("-exec bypass") || ind.Contains("-win hidden"))
-                return $"PowerShell launched with bypass-style flags{reps}";
+                return $"Skipped security limits when using PowerShell{reps}";
 
-            return $"Spawned process '{ind}'{reps}: '{ShortCmd(ev.RawData)}'";
+            return $"Start new program '{ind}'{reps}: '{ShortCmd(ev.RawData)}'";
         }
 
         private static string ShortPath(string path)

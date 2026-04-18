@@ -197,41 +197,39 @@ namespace Cyber_behaviour_profiling
 
                 string ext  = Path.GetExtension(file.FullPath).ToLowerInvariant();
                 string name = Path.GetFileName(file.FullPath).ToLowerInvariant();
-                bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
 
-                if (MapToData._executableExtensions.Contains(ext))
+                if (DroppedProgramClassifier.IsPeOrScript(ext))
                 {
-                    bool isMalwareArtifact = MapToData._malwareArtifacts.Contains(name);
-                    bool inSensitiveDir = sensitiveDirs?.Any(d =>
-                        file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true;
+                    bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
+                    SignatureVerificationResult? sig = supportsEmbeddedSignature
+                        ? GetFileSignatureInfo(file.FullPath)
+                        : null;
+
+                    var verdict = DroppedProgramClassifier.Classify(file.FullPath, sig);
+
+                    FindingSeverity severity = verdict.Verdict switch
+                    {
+                        DroppedProgramVerdict.Malicious  => FindingSeverity.Alert,
+                        DroppedProgramVerdict.Suspicious => FindingSeverity.Warning,
+                        _                               => FindingSeverity.Info
+                    };
 
                     var finding = new InvestigationFinding
                     {
-                        Description = BuildNewArtifactDescription(file.FullPath, file.Size, supportsEmbeddedSignature),
+                        Description = verdict.Reason,
                         ArtifactPath = file.FullPath,
-                        Severity = FindingSeverity.Alert
+                        Severity = severity
                     };
 
-                    InvestigationLog.Write($"  [ALERT] New executable: {file.FullPath}");
-                    InvestigationLog.Write($"          Size={file.Size}, MalwareArtifact={isMalwareArtifact}, SensitiveDir={inSensitiveDir}");
-
-                    if (supportsEmbeddedSignature)
-                    {
-                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                        finding.Description = BuildNewArtifactDescription(file.FullPath, file.Size, supportsEmbeddedSignature, signature.ShortLabel);
-                        InvestigationLog.Write($"          Trust={signature.ShortLabel}");
-                        AppendSignatureContext(finding, signature, elevateTrustFailures: false);
-                    }
-
-                    if (isMalwareArtifact)
-                    {
+                    if (verdict.ChildReason != null)
                         finding.Children.Add(new InvestigationFinding
                         {
-                            Description = $"Filename '{name}' matches a known malware tool",
-                            Severity = FindingSeverity.Alert
+                            Description = verdict.ChildReason,
+                            Severity = severity
                         });
-                    }
 
+                    bool inSensitiveDir = sensitiveDirs?.Any(d =>
+                        file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true;
                     if (inSensitiveDir)
                     {
                         finding.Children.Add(new InvestigationFinding
@@ -239,7 +237,14 @@ namespace Cyber_behaviour_profiling
                             Description = "Dropped into a sensitive/credential directory",
                             Severity = FindingSeverity.Alert
                         });
+                        if (finding.Severity != FindingSeverity.Alert)
+                            finding.Severity = FindingSeverity.Alert;
                     }
+
+                    string logLabel = verdict.Verdict == DroppedProgramVerdict.Malicious ? "ALERT"
+                                    : verdict.Verdict == DroppedProgramVerdict.Suspicious ? "WARN" : "INFO";
+                    InvestigationLog.Write($"  [{logLabel}] " +
+                        $"New {(supportsEmbeddedSignature ? "program" : "script")}: {file.FullPath} [{verdict.RuleId}]");
 
                     result.Findings.Add(finding);
                 }
@@ -271,40 +276,47 @@ namespace Cyber_behaviour_profiling
                 if (IsNoise(file.FullPath)) continue;
 
                 string ext = Path.GetExtension(file.FullPath).ToLowerInvariant();
-                if (!MapToData._executableExtensions.Contains(ext)) continue;
+                if (!DroppedProgramClassifier.IsPeOrScript(ext)) continue;
 
                 bool supportsEmbeddedSignature = SignatureVerifier.SupportsEmbeddedSignature(file.FullPath);
-                InvestigationLog.Write($"  Modified executable: {file.FullPath}");
+                SignatureVerificationResult? sig = supportsEmbeddedSignature
+                    ? GetFileSignatureInfo(file.FullPath)
+                    : null;
 
-                if (supportsEmbeddedSignature)
+                InvestigationLog.Write($"  Modified program/script: {file.FullPath} Trust={sig?.ShortLabel ?? "n/a"}");
+
+                
+                
+                var verdict = DroppedProgramClassifier.Classify(file.FullPath, sig);
+
+                if (verdict.Verdict == DroppedProgramVerdict.Malicious ||
+                    verdict.Verdict == DroppedProgramVerdict.Suspicious)
                 {
-                    SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                    InvestigationLog.Write($"          Trust={signature.ShortLabel}");
-
-                    if (signature.TrustState != SignatureTrustState.InvalidSignature &&
-                        signature.TrustState != SignatureTrustState.Revoked)
-                        continue;
-
+                    FindingSeverity sev = verdict.Verdict == DroppedProgramVerdict.Malicious
+                        ? FindingSeverity.Alert : FindingSeverity.Warning;
                     var finding = new InvestigationFinding
                     {
-                        Description = $"Binary with fake/tampered signature modified during monitoring: {file.FullPath} (trust: {signature.ShortLabel})",
+                        Description = verdict.Reason,
                         ArtifactPath = file.FullPath,
-                        Severity = FindingSeverity.Alert
+                        Severity = sev
                     };
-                    finding.Children.Add(new InvestigationFinding
-                    {
-                        Description = signature.Summary,
-                        Severity = FindingSeverity.Alert
-                    });
+                    if (verdict.ChildReason != null)
+                        finding.Children.Add(new InvestigationFinding
+                        {
+                            Description = verdict.ChildReason,
+                            Severity = sev
+                        });
+                    InvestigationLog.Write($"  [{(sev == FindingSeverity.Alert ? "ALERT" : "WARN")}] Modified program flagged: {verdict.RuleId}");
                     result.Findings.Add(finding);
                 }
                 else
                 {
+                    InvestigationLog.Write($"  [INFO] Modified program/script (no malicious indicators)");
                     result.Findings.Add(new InvestigationFinding
                     {
-                        Description = $"Script modified during monitoring: {file.FullPath}",
+                        Description = $"{(supportsEmbeddedSignature ? "Program" : "Script")} modified during monitoring: {file.FullPath}",
                         ArtifactPath = file.FullPath,
-                        Severity = FindingSeverity.Warning
+                        Severity = FindingSeverity.Info
                     });
                 }
             }
@@ -319,7 +331,7 @@ namespace Cyber_behaviour_profiling
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = SignatureVerifier.SupportsEmbeddedSignature(path)
-                            ? $"Binary deleted during monitoring: {path}"
+                            ? $"Program deleted during monitoring: {path}"
                             : $"Script deleted during monitoring: {path}",
                         ArtifactPath = path,
                         Severity = FindingSeverity.Warning
@@ -386,7 +398,7 @@ namespace Cyber_behaviour_profiling
                     var finding = new InvestigationFinding
                     {
                         Description = supportsEmbeddedSignature
-                            ? $"Binary appeared after connecting to {destination}: {file.FullPath}"
+                            ? $"Program appeared after connecting to {destination}: {file.FullPath}"
                             : $"Script appeared after connecting to {destination}: {file.FullPath}",
                         ArtifactPath = file.FullPath,
                         Severity = FindingSeverity.Alert
@@ -560,7 +572,7 @@ namespace Cyber_behaviour_profiling
             bool supportsEmbeddedSignature,
             string trustLabel = "")
         {
-            string kind = supportsEmbeddedSignature ? "binary" : "script";
+            string kind = supportsEmbeddedSignature ? "program" : "script";
             string suffix = string.IsNullOrWhiteSpace(trustLabel)
                 ? $"(size: {size:N0} bytes)"
                 : $"(size: {size:N0} bytes, trust: {trustLabel})";

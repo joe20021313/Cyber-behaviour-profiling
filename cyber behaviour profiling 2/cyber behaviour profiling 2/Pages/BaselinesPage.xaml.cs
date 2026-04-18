@@ -127,7 +127,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 _targetProcess = (ProcessDropdown.SelectedItem as string)?.Trim().ToLower() ?? "";
                 if (string.IsNullOrEmpty(_targetProcess))
                 {
-                    SetError("Pick a process from the list first.");
+                    SetError("Please select a process from the list.");
                     return;
                 }
                 if (!_targetProcess.EndsWith(".exe")) _targetProcess += ".exe";
@@ -164,7 +164,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     }
                     catch (Exception ex)
                     {
-                        SetError($"Couldn't start monitoring — {ex.Message}");
+                        SetError($"Failed to monitor process: {ex.Message}");
                         return;
                     }
                 }
@@ -197,6 +197,8 @@ namespace cyber_behaviour_profiling_2.Pages
             }
         }
 
+        private const int ThinBaselineThreshold = 20;
+
         private bool TryCaptureFromProfile(ProcessProfile profile, int meaningfulCount, string reason)
         {
             if (meaningfulCount < AnomalyDetector.MinVectorsRequired)
@@ -213,9 +215,12 @@ namespace cyber_behaviour_profiling_2.Pages
             string metricSummary = BuildBaselineMetricSummary(_capturedBaseline);
 
             StopTempSession();
-            StatusText.Text =
-                $"{reason} — captured {meaningfulCount} vectors from this recording window. Enter a name and Save.\n{metricSummary}";
             SetState(RecordState.Done);
+
+            StatusText.Text = _capturedBaseline.Snapshots.Length < ThinBaselineThreshold
+                ? $"Heads up — only {_capturedBaseline.Snapshots.Length} data points captured. A longer recording gives better accuracy.\n{reason}. Click Save to keep it.\n\n{metricSummary}"
+                : $"{reason}. {meaningfulCount} data points captured. Click Save to keep it.\n\n{metricSummary}";
+
             return true;
         }
 
@@ -237,9 +242,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 return;
 
             StopTempSession();
-            SetError(
-                $"Not enough data yet — only {meaningfulCount} of {AnomalyDetector.MinVectorsRequired} vectors captured. " +
-                "Let the process run a bit longer and try again.");
+            SetError($"Not enough data yet — got {meaningfulCount} of {AnomalyDetector.MinVectorsRequired} required data points. Try letting the process run a bit longer.");
         }
 
         private void RecordTimer_Tick(object? sender, EventArgs e)
@@ -255,7 +258,7 @@ namespace cyber_behaviour_profiling_2.Pages
             if (matchingProfile == null)
             {
 
-                StatusText.Text = $"Waiting for {_targetProcess} to do something — let it run for a bit...";
+                StatusText.Text = $"Waiting for {_targetProcess} to do something...";
                 return;
             }
 
@@ -304,11 +307,9 @@ namespace cyber_behaviour_profiling_2.Pages
             }
 
             string exitHint = processGone
-                ? $" (process exited — need {Math.Max(0, AnomalyDetector.MinVectorsRequired - meaningfulCount)} more vectors)"
-                : "";
-            StatusText.Text =
-                $"Gathering KNN snapshot vectors (this recording): {meaningfulCount}/{target} " +
-                $"(total observed: {count}) — auto-save on exit or after {SnapshotStallAutoCaptureWindow.TotalSeconds:0}s with no new vectors.{exitHint}";
+                ? $" Process has exited — need {Math.Max(0, AnomalyDetector.MinVectorsRequired - meaningfulCount)} more data points to finish."
+                : $" Stops automatically when the process exits or goes idle for {SnapshotStallAutoCaptureWindow.TotalSeconds:0}s.";
+            StatusText.Text = $"Watching {_targetProcess}... {meaningfulCount} of {target} data points collected.{exitHint}";
         }
 
         private static ProcessProfile? FindLatestProfile(string processNameNoExt)
@@ -333,13 +334,13 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             var snapshots = baseline.Snapshots ?? Array.Empty<double[]>();
             if (snapshots.Length == 0)
-                return "Metric ranges unavailable.";
+                return "No metric data available.";
 
             int dimensions = Math.Min(
                 BaselineMetricNames.Length,
                 snapshots.Where(s => s != null).Select(s => s.Length).DefaultIfEmpty(0).Max());
             if (dimensions == 0)
-                return "Metric ranges unavailable.";
+                return "No metric data available.";
 
             var ranges = new List<string>();
             var zeroOnly = new List<string>();
@@ -364,11 +365,11 @@ namespace cyber_behaviour_profiling_2.Pages
             }
 
             if (ranges.Count == 0)
-                return "Metric ranges unavailable.";
+                return "No metric data available.";
 
-            string summary = $"Vectors: {snapshots.Length}. Ranges (p95): {string.Join(", ", ranges)}.";
+            string summary = $"{snapshots.Length} data points. Activity ranges (p95): {string.Join(", ", ranges)}.";
             if (zeroOnly.Count > 0)
-                summary += $"\nWarning — zero-only metrics: {string.Join(", ", zeroOnly)}.";
+                summary += $"\nNo activity was seen for: {string.Join(", ", zeroOnly)}. Consider recording while the app is actually doing something.";
 
             var writeValues = snapshots
                 .Where(s => s != null && s.Length > 0)
@@ -383,7 +384,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 double maxGap    = gaps.Max();
                 double medianGap = gaps.OrderBy(g => g).ElementAt(gaps.Count / 2);
                 if (maxGap > 2.0 * medianGap + 0.5)
-                    summary += "\nMulti-modal baseline detected (e.g. idle + active phases) — this is expected for session recordings.";
+                    summary += "\nActivity varied quite a bit during recording — that's fine, but worth knowing.";
             }
 
             return summary;
@@ -401,7 +402,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     StartStopBtn.IsEnabled = true;
                     StartStopBtn.Content = "Start Recording";
                     RecordProgress.Visibility = Visibility.Collapsed;
-                    StatusText.Text = "Pick a process from the list, then hit Start Recording.";
+                    StatusText.Text = "Pick a process from the list and hit Start Recording.";
                     SetDotColor("#EF4444");
                     _pulseTimer.Stop();
                     _recordTimer.Stop();
@@ -415,7 +416,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     RefreshBtn.IsEnabled = false;
                     StartStopBtn.Content = "Stop";
                     RecordProgress.Visibility = Visibility.Visible;
-                    StatusText.Text = "Getting things ready...";
+                    StatusText.Text = "Getting ready...";
                     SetDotColor("#F59E0B");
                     _pulseTimer.Start();
                     _recordTimer.Start();
@@ -426,7 +427,7 @@ namespace cyber_behaviour_profiling_2.Pages
                     StartStopBtn.Content = "Done";
                     StartStopBtn.IsEnabled = false;
                     RecordProgress.Visibility = Visibility.Collapsed;
-                    StatusText.Text = $"✓ Captured {_capturedBaseline?.Snapshots.Length} reference vectors — click Save.";
+                    StatusText.Text = $"✓ {_capturedBaseline?.Snapshots.Length} data points captured. Click Save to store the baseline.";
                     SetDotColor("#10B981");
                     _pulseTimer.Stop();
                     _recordTimer.Stop();
@@ -464,7 +465,7 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             if (_capturedBaseline == null)
             {
-                SetError("Nothing to save yet — record a baseline first.");
+                SetError("Please record a baseline before saving.");
                 return;
             }
 
@@ -487,8 +488,8 @@ namespace cyber_behaviour_profiling_2.Pages
                 RefreshBaselineList();
 
                 StatusText.Text = found
-                    ? $"Saved baseline '{key}' with {vectors} vectors to {savePath}.\n{metricSummary}"
-                    : $"Baseline save completed but '{key}' was not present after reload. Please retry.";
+                    ? $"Baseline saved for '{key}' — {vectors} data points stored.\n\n{metricSummary}"
+                    : $"Saved, but couldn't confirm '{key}' loaded correctly. Try restarting the app.";
             }
             catch (Exception ex)
             {
@@ -508,7 +509,7 @@ namespace cyber_behaviour_profiling_2.Pages
             }
             EmptyStatePanel.Visibility = Visibility.Collapsed;
 
-            foreach (var kvp in baselines.OrderBy(b => b.Key))
+            foreach (var kvp in baselines.OrderBy(b => b.Key).Where(b => b.Value.Source == "user"))
             {
                 string processName = kvp.Key;
                 var baseline = kvp.Value;
@@ -537,26 +538,21 @@ namespace cyber_behaviour_profiling_2.Pages
                     FontWeight = FontWeights.SemiBold,
                     Foreground = (Brush)FindResource("TextFillColorPrimaryBrush")
                 };
-                var sourceTag = new Border
-                {
-                    CornerRadius = new CornerRadius(3),
-                    Padding = new Thickness(6, 1, 6, 1),
-                    Margin = new Thickness(0, 4, 0, 0),
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Background = baseline.Source == "user"
-                        ? new SolidColorBrush(Color.FromArgb(0x40, 0x6C, 0x63, 0xFF))
-                        : new SolidColorBrush(Color.FromArgb(0x30, 0x88, 0x88, 0x88))
-                };
-                sourceTag.Child = new TextBlock
-                {
-                    Text = baseline.Source == "user" ? "user recorded" : "built-in",
-                    FontSize = 10,
-                    Foreground = baseline.Source == "user"
-                        ? new SolidColorBrush(Color.FromRgb(0x6C, 0x63, 0xFF))
-                        : (Brush)FindResource("TextFillColorSecondaryBrush")
-                };
+
                 nameStack.Children.Add(nameText);
-                nameStack.Children.Add(sourceTag);
+
+                if (!string.IsNullOrWhiteSpace(baseline.RecordedAt))
+                {
+                    nameStack.Children.Add(new TextBlock
+                    {
+                        Text = $"Recorded: {baseline.RecordedAt}",
+                        FontSize = 10,
+                        Margin = new Thickness(0, 2, 0, 0),
+                        Foreground = (Brush)FindResource("TextFillColorSecondaryBrush")
+                    });
+                }
+
+
                 Grid.SetColumn(nameStack, 0);
                 grid.Children.Add(nameStack);
 

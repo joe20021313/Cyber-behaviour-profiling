@@ -11,7 +11,7 @@ public static class MetadataExporter
         ["FileRename"]                 = "File Rename",
         ["SensitiveDirAccess"]         = "Sensitive Directory Access",
         ["UncommonWrite"]              = "Uncommon File Write",
-        ["AccessibilityBinaryOverwrite"] = "Accessibility Binary Overwrite",
+        ["AccessibilityProgramOverwrite"] = "Accessibility Program Overwrite",
         ["Executable Drop"]            = "Executable Drop",
         ["Registry"]                   = "Registry",
         ["NetworkConnect"]             = "Network Connection",

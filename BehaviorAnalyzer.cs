@@ -19,7 +19,7 @@ namespace Cyber_behaviour_profiling
     public enum SemanticCheckId
     {
         SuspiciousExecutionPath,
-        MissingBinaryOnDisk,
+        MissingProgramOnDisk,
         ProcessExitedBeforeAnalysis,
         SystemProcessNotInSystem32,
         SpawnedBySuspiciousParent,
@@ -63,7 +63,7 @@ namespace Cyber_behaviour_profiling
         ExfiltrationChainCollectStageNoExfilYet,
         UnsignedWriteToUnrelatedProgramDataFolder,
         MultipleStagingLocationsUsed,
-        ExecutableBinaryDropped,
+        ExecutableProgramDropped,
         ScriptFileDropped,
         MultipleExecutablesDropped,
         HighFileCreateDeleteChurn,
@@ -71,7 +71,7 @@ namespace Cyber_behaviour_profiling
         WriteDirectoryScatter,
         WideWriteDirectoryScatter,
         ProcessSelfDeletion,
-        OwnBinaryDeleted,
+        OwnProgramDeleted,
         ExecutableFileDeleted,
         LsassMemoryAccess,
         RemoteThreadInjection,
@@ -191,6 +191,7 @@ namespace Cyber_behaviour_profiling
             bool isKnownBrowserProcess = IsKnownBrowserProcess(profile, ctx);
             bool browserLaunchedByOtherProgram = IsBrowserLaunchedByOtherProgram(profile, ctx, isKnownBrowserProcess);
             bool browserBenignMode = isKnownBrowserProcess && !browserLaunchedByOtherProgram;
+            bool installerBenignMode = IsKnownInstallerProcess(nameNoExt, ctx);
 
             bool hasBehavioralRedFlag = HasBehavioralRedFlag(profile, ctx, browserBenignMode);
 
@@ -204,24 +205,24 @@ namespace Cyber_behaviour_profiling
             {
                 report.FinalVerdict = ThreatImpact.Malicious;
                 report.DecisionReasons.Add(
-                    $"'{profile.ProcessName}' uses a trusted name but operates from a suspicious path ({ctx.FilePath}) without a valid signature.");
+                    $"The program '{profile.ProcessName}' uses a trusted name but operates from a strange folder ({ctx.FilePath}) and has no valid signature.");
                 return report;
             }
 
             var netInvestigation = RunNetworkInvestigation(events, profile);
 
             var checks = new List<SemanticCheck>();
-            checks.AddRange(CheckBinaryProvenance(ctx, profile));
+            checks.AddRange(CheckProgramProvenance(ctx, profile));
             checks.AddRange(CheckSysmonEvents(events));
             checks.AddRange(CheckParent(ctx, profile, browserLaunchedByOtherProgram));
             checks.AddRange(CheckSuspiciousCommandSemantics(profile));
             checks.AddRange(CheckRuntimeAnomalies(ctx, events, profile, netInvestigation));
-            checks.AddRange(CheckVelocityAndDensity(events));
+            checks.AddRange(CheckVelocityAndDensity(events, installerBenignMode));
             checks.AddRange(CheckSystemAreaFootprint(events, profile, isKnownBrowserProcess));
             checks.AddRange(CheckTemporalAnomalies(events, ctx));
-            checks.AddRange(CheckContextFolderBehavior(ctx, events, profile));
-            checks.AddRange(CheckExecutableDrops(ctx, events, profile));
-            checks.AddRange(CheckFileChurnBehavior(ctx, profile, browserBenignMode));
+            checks.AddRange(CheckContextFolderBehavior(ctx, events, profile, installerBenignMode));
+            checks.AddRange(CheckExecutableDrops(ctx, events, profile, installerBenignMode));
+            checks.AddRange(CheckFileChurnBehavior(ctx, profile, browserBenignMode, installerBenignMode));
             checks.AddRange(CheckDirectoryScatter(ctx, profile));
             checks.AddRange(CheckSelfDeletion(ctx, profile, browserBenignMode));
 
@@ -374,12 +375,12 @@ namespace Cyber_behaviour_profiling
             if (firedCount >= 6)
             {
                 if (ThreatImpact.Suspicious > highestImpact) highestImpact = ThreatImpact.Suspicious;
-                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Suspicious)}] {firedCount} independent signals detected");
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Suspicious)}] Found {firedCount} different warning signs");
             }
             else if (firedCount >= 3)
             {
                 if (ThreatImpact.Inconclusive > highestImpact) highestImpact = ThreatImpact.Inconclusive;
-                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Inconclusive)}] {firedCount} independent signals detected");
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Inconclusive)}] Found {firedCount} different warning signs");
             }
 
             var dirInvestigation = HasFileOrArtifactFootprint(profile, events)
@@ -448,12 +449,12 @@ namespace Cyber_behaviour_profiling
             if (chainResult.HasHardIndicator && highestImpact < ThreatImpact.Malicious)
             {
                 highestImpact = ThreatImpact.Malicious;
-                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Malicious)}] Multiple high-confidence signals point to malicious activity.");
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Malicious)}] Found multiple strong signs of malware.");
             }
             else if (!chainResult.HasHardIndicator && hasBehavioralRedFlag && highestImpact < ThreatImpact.Suspicious)
             {
                 highestImpact = ThreatImpact.Suspicious;
-                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Suspicious)}] Behavioral red-flag pattern observed (staged executable cleanup or self-delete behaviour).");
+                report.DecisionReasons.Add($"  [{ToImpactLabel(ThreatImpact.Suspicious)}] Noticed bad program behavior (like hiding files or deleting itself).");
             }
 
             if (highestImpact == ThreatImpact.Inconclusive &&
@@ -483,10 +484,10 @@ namespace Cyber_behaviour_profiling
             };
             string verdictDetail = grade switch
             {
-                "MALICIOUS"    => "Malicious activity observed.",
-                "SUSPICIOUS"   => "Suspicious activity observed.",
-                "INCONCLUSIVE" => "Unusual activity observed, but the evidence is limited.",
-                _              => "No malicious activity observed."
+                "MALICIOUS"    => "Found malware activity.",
+                "SUSPICIOUS"   => "Saw suspicious activity.",
+                "INCONCLUSIVE" => "Activity seems strange, but more proof is needed.",
+                _              => "No dangerous or strange activity found."
             };
             report.DecisionReasons.Insert(0, verdictDetail);
 
@@ -764,7 +765,7 @@ namespace Cyber_behaviour_profiling
 
         private static bool IsHardIndicatorEvent(SuspiciousEvent ev, bool treatCredentialFileAccessAsHard)
         {
-            if (ev.EventType is "DPAPI_Decrypt" or "AccessibilityBinaryOverwrite"
+            if (ev.EventType is "DPAPI_Decrypt" or "AccessibilityProgramOverwrite"
                     or "LsassAccess" or "RemoteThreadInjection" or "ProcessTampering")
                 return true;
             if (ev.EventType is "NetworkConnect" or "DNS_Query")
@@ -799,7 +800,7 @@ namespace Cyber_behaviour_profiling
             IReadOnlyCollection<SuspiciousEvent> events,
             bool treatCredentialFileAccessAsHard = true) =>
             events.Any(e => e.EventType is "DPAPI_Decrypt" or "LsassAccess" or "RemoteThreadInjection" or
-                "ProcessTampering" or "AccessibilityBinaryOverwrite") ||
+                "ProcessTampering" or "AccessibilityProgramOverwrite") ||
             events.Any(e =>
                 ((treatCredentialFileAccessAsHard && e.Category == "credential_file_access") ||
                  e.Category is "registry_credential_access" or "lsass_access" or
@@ -811,7 +812,7 @@ namespace Cyber_behaviour_profiling
             IReadOnlyCollection<SuspiciousEvent> events,
             bool treatCredentialFileAccessAsHard = true) =>
             events.Any(e => e.EventType is "DPAPI_Decrypt" or "LsassAccess" or "RemoteThreadInjection" or
-                "ProcessTampering" or "AccessibilityBinaryOverwrite") ||
+                "ProcessTampering" or "AccessibilityProgramOverwrite") ||
             events.Any(e =>
                 ((treatCredentialFileAccessAsHard && e.Category == "credential_file_access") ||
                  e.Category is "registry_credential_access" or "lsass_access" or
@@ -831,6 +832,22 @@ namespace Cyber_behaviour_profiling
             }
 
             return false;
+        }
+
+        private static readonly HashSet<string> _installerProcessNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "msiexec", "setup", "install", "dotnet", "msbuild", "cl", "link", "cmake",
+            "node", "npm", "cargo", "go", "7z", "7za", "winrar", "winzip", "unzip"
+        };
+
+        private static bool IsKnownInstallerProcess(string nameNoExt, ProcessContext? ctx)
+        {
+            if (!_installerProcessNames.Contains(nameNoExt))
+                return false;
+
+            
+            
+            return ctx?.IsTrustedPublisher == true;
         }
 
         private static string ResolveParentProcessName(ProcessProfile profile, ProcessContext ctx)
@@ -958,7 +975,7 @@ namespace Cyber_behaviour_profiling
             commandLine.Contains("timeout") ||
             commandLine.Contains("choice");
 
-        private static bool ReferencesOwnBinary(string commandLine, string ownPath, string processNameNoExt) =>
+        private static bool ReferencesOwnProgram(string commandLine, string ownPath, string processNameNoExt) =>
             (ownPath != "unknown" && commandLine.Contains(ownPath)) ||
             (processNameNoExt.Length > 3 && commandLine.Contains(processNameNoExt));
 
@@ -1040,7 +1057,7 @@ namespace Cyber_behaviour_profiling
             }
 
             return events.Any(e => e.EventType is "FileWrite" or "FileRead" or "FileOpen" or "FileDelete" or
-                "FileRename" or "SensitiveDirAccess" or "UncommonWrite" or "AccessibilityBinaryOverwrite" or
+                "FileRename" or "SensitiveDirAccess" or "UncommonWrite" or "AccessibilityProgramOverwrite" or
                 "Executable Drop" or "ContextSignal");
         }
 
@@ -1177,16 +1194,16 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.ProcessExitedBeforeAnalysis,
         };
 
-        private static IEnumerable<SemanticCheck> CheckBinaryProvenance(ProcessContext ctx, ProcessProfile profile)
+        private static IEnumerable<SemanticCheck> CheckProgramProvenance(ProcessContext ctx, ProcessProfile profile)
         {
             yield return Check(SemanticCheckId.SuspiciousExecutionPath,
                 ctx.IsSuspiciousPath,
                 ThreatImpact.Suspicious, $"This process is running from '{ctx.FilePath}', which is a temporary or user-writable location. Legitimate software is rarely installed here.");
 
             bool isRootedPath = Path.IsPathRooted(ctx.FilePath);
-            bool binaryMissing = ctx.FilePath == "UNKNOWN";
+            bool programMissing = ctx.FilePath == "UNKNOWN";
 
-            bool binaryDeletedFromDisk = ctx.FilePath != "UNKNOWN" && ctx.ProcessExited && isRootedPath && !File.Exists(ctx.FilePath);
+            bool programDeletedFromDisk = ctx.FilePath != "UNKNOWN" && ctx.ProcessExited && isRootedPath && !File.Exists(ctx.FilePath);
 
             string name = profile.ProcessName.ToLowerInvariant();
             string nameNoExt = Path.GetFileNameWithoutExtension(name);
@@ -1200,14 +1217,14 @@ namespace Cyber_behaviour_profiling
             bool inSystemDir = ctx.FilePath.StartsWith(@"c:\windows\", StringComparison.OrdinalIgnoreCase);
 
             if (claimsKnownName)
-                binaryDeletedFromDisk = false;
+                programDeletedFromDisk = false;
 
-            yield return Check(SemanticCheckId.MissingBinaryOnDisk,
-                binaryDeletedFromDisk,
-                ThreatImpact.Malicious, $"Binary no longer on disk: {Path.GetFileName(ctx.FilePath)}");
+            yield return Check(SemanticCheckId.MissingProgramOnDisk,
+                programDeletedFromDisk,
+                ThreatImpact.Malicious, $"Program no longer on disk: {Path.GetFileName(ctx.FilePath)}");
 
             yield return Check(SemanticCheckId.ProcessExitedBeforeAnalysis,
-                binaryMissing,
+                programMissing,
                 ThreatImpact.Inconclusive, "Process exited before file path could be confirmed");
 
             yield return Check(SemanticCheckId.SystemProcessNotInSystem32,
@@ -1403,9 +1420,9 @@ namespace Cyber_behaviour_profiling
 
             string lowerNameNoExt = Path.GetFileNameWithoutExtension(
                 profile.ProcessName?.ToLowerInvariant() ?? "");
-            bool isKnownSystemBinary = MapToData._trustedSystem.Any(t =>
+            bool isKnownSystemProgram = MapToData._trustedSystem.Any(t =>
                 Path.GetFileNameWithoutExtension(t) == lowerNameNoExt);
-            if (isKnownSystemBinary)
+            if (isKnownSystemProgram)
                 return false;
 
             bool treatCredentialFileAccessAsHard = !MapToData.IsKnownBrowserProcessName(profile.ProcessName);
@@ -1455,7 +1472,7 @@ namespace Cyber_behaviour_profiling
                    networkInvestigationRaisedRisk;
         }
 
-        private static IEnumerable<SemanticCheck> CheckVelocityAndDensity(List<SuspiciousEvent> events)
+        private static IEnumerable<SemanticCheck> CheckVelocityAndDensity(List<SuspiciousEvent> events, bool installerBenignMode = false)
         {
             if (!ObservedTimelineWindow.TryCompute(events, out var sessionStart, out _, out var sessionSecs))
                 yield break;
@@ -1464,12 +1481,13 @@ namespace Cyber_behaviour_profiling
             int totalAttempts = events.Sum(e => e.AttemptCount);
             double overallRate = totalAttempts / sessionSecs;
 
+            double highRateThreshold = installerBenignMode ? 200 : 50;
             yield return Check(SemanticCheckId.HighOverallEventRate,
-                overallRate > 50,
+                overallRate > highRateThreshold,
                 ThreatImpact.Inconclusive, $"{totalAttempts:N0} events in {sessionSecs:F1}s ({overallRate:F0}/sec)");
 
             yield return Check(SemanticCheckId.ModerateAutomatedRate,
-                overallRate > 10 && overallRate <= 50,
+                overallRate > 10 && overallRate <= highRateThreshold,
                 ThreatImpact.Inconclusive, $"Elevated activity rate: {overallRate:F0} events/sec");
 
             foreach (var ev in events)
@@ -1628,7 +1646,7 @@ namespace Cyber_behaviour_profiling
         }
 
         private static IEnumerable<SemanticCheck> CheckContextFolderBehavior(
-            ProcessContext ctx, List<SuspiciousEvent> events, ProcessProfile profile)
+            ProcessContext ctx, List<SuspiciousEvent> events, ProcessProfile profile, bool installerBenignMode = false)
         {
             var contextEvents = events.Where(e => e.EventType == "ContextSignal").ToList();
             if (!contextEvents.Any()) yield break;
@@ -1764,14 +1782,15 @@ namespace Cyber_behaviour_profiling
                 .Cast<string>()
                 .ToList();
 
+            int stagingThreshold = installerBenignMode ? 4 : 2;
             yield return Check(SemanticCheckId.MultipleStagingLocationsUsed,
-                touchedContextFolders.Count >= 2,
+                touchedContextFolders.Count >= stagingThreshold,
                 ThreatImpact.Suspicious,
                 $"Files written to {touchedContextFolders.Count} separate staging locations: {string.Join(", ", touchedContextFolders)}");
         }
 
         private static IEnumerable<SemanticCheck> CheckExecutableDrops(
-            ProcessContext ctx, List<SuspiciousEvent> events, ProcessProfile profile)
+            ProcessContext ctx, List<SuspiciousEvent> events, ProcessProfile profile, bool installerBenignMode = false)
         {
             if (profile.ExeDropPaths.IsEmpty) yield break;
 
@@ -1794,23 +1813,24 @@ namespace Cyber_behaviour_profiling
 
             if (!suspiciousPaths.Any()) yield break;
 
-            var binaryExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".exe", ".dll", ".scr", ".pif", ".com", ".msi" };
+            var programExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".exe", ".dll", ".scr", ".pif", ".com", ".msi" };
 
-            var binaryPaths = suspiciousPaths.Where(p => binaryExts.Contains(Path.GetExtension(p))).ToList();
+            var programPaths = suspiciousPaths.Where(p => programExts.Contains(Path.GetExtension(p))).ToList();
             var scriptPaths = suspiciousPaths.Where(p =>
             {
                 var ext = Path.GetExtension(p);
-                return MapToData._executableExtensions.Contains(ext) && !binaryExts.Contains(ext);
+                return MapToData._executableExtensions.Contains(ext) && !programExts.Contains(ext);
             }).ToList();
 
-            var binaryExtsFound = binaryPaths.Select(p => Path.GetExtension(p).ToLowerInvariant()).Distinct();
+            var programExtsFound = programPaths.Select(p => Path.GetExtension(p).ToLowerInvariant()).Distinct();
             var scriptExtsFound = scriptPaths.Select(p => Path.GetExtension(p).ToLowerInvariant()).Distinct();
 
-            yield return Check(SemanticCheckId.ExecutableBinaryDropped,
-                binaryPaths.Any(),
+            
+            yield return Check(SemanticCheckId.ExecutableProgramDropped,
+                programPaths.Any() && !installerBenignMode,
                 ThreatImpact.Malicious,
-                $"{binaryPaths.Count} executable file(s) ({string.Join(", ", binaryExtsFound)}) were written to a user-accessible or temporary location: " +
-                string.Join(", ", binaryPaths.Take(3).Select(p => Path.GetFileName(p))));
+                $"{programPaths.Count} executable file(s) ({string.Join(", ", programExtsFound)}) were written to a user-accessible or temporary location: " +
+                string.Join(", ", programPaths.Take(3).Select(p => Path.GetFileName(p))));
 
             yield return Check(SemanticCheckId.ScriptFileDropped,
                 scriptPaths.Any(),
@@ -1818,7 +1838,7 @@ namespace Cyber_behaviour_profiling
                 $"{scriptPaths.Count} script file(s) ({string.Join(", ", scriptExtsFound)}) were written to a user-accessible or temporary location: " +
                 string.Join(", ", scriptPaths.Take(3).Select(p => Path.GetFileName(p))));
 
-            int totalDrops = binaryPaths.Count + scriptPaths.Count;
+            int totalDrops = programPaths.Count + scriptPaths.Count;
             yield return Check(SemanticCheckId.MultipleExecutablesDropped,
                 totalDrops >= 3,
                 ThreatImpact.Malicious,
@@ -1828,7 +1848,8 @@ namespace Cyber_behaviour_profiling
         private static IEnumerable<SemanticCheck> CheckFileChurnBehavior(
             ProcessContext ctx,
             ProcessProfile profile,
-            bool browserBenignMode)
+            bool browserBenignMode,
+            bool installerBenignMode = false)
         {
             int writes = Math.Max(0, profile.TotalFileWrites - profile.TotalRuntimeArtifactWrites);
             int deletes = Math.Max(0, profile.TotalFileDeletes - profile.TotalRuntimeArtifactDeletes);
@@ -1837,9 +1858,10 @@ namespace Cyber_behaviour_profiling
             double runtime = Math.Max(ctx.UptimeSeconds, 1.0);
             double churnRate = total / runtime;
 
-            int churnDeleteThreshold = browserBenignMode ? 40 : 5;
-            double churnRateThreshold = browserBenignMode ? 80 : 10;
-            int excessiveDeleteThreshold = browserBenignMode ? 250 : 20;
+            bool highActivityMode = browserBenignMode || installerBenignMode;
+            int churnDeleteThreshold = highActivityMode ? 40 : 5;
+            double churnRateThreshold = highActivityMode ? 80 : 10;
+            int excessiveDeleteThreshold = highActivityMode ? 250 : 20;
 
             yield return Check(SemanticCheckId.HighFileCreateDeleteChurn,
                 deletes >= churnDeleteThreshold && churnRate > churnRateThreshold,
@@ -1897,7 +1919,7 @@ namespace Cyber_behaviour_profiling
                     continue;
 
                 bool hasDeleteVerb = ContainsDeleteVerb(lowerCmd);
-                bool referencesOwn = ReferencesOwnBinary(lowerCmd, ownPath, ownName);
+                bool referencesOwn = ReferencesOwnProgram(lowerCmd, ownPath, ownName);
                 bool hasDelayAndDelete = ContainsDelayPrimitive(lowerCmd) && hasDeleteVerb;
 
                 if (hasDeleteVerb && (referencesOwn || hasDelayAndDelete))
@@ -1925,7 +1947,7 @@ namespace Cyber_behaviour_profiling
             var deletedExes = profile.DeletedPaths
                 .Where(p => MapToData._executableExtensions.Contains(Path.GetExtension(p)))
                 .Where(p => !MapToData.IsRuntimeArtifactPath(p))
-                .Where(p => !browserBenignMode || IsBinaryExecutableExtension(p))
+                .Where(p => !browserBenignMode || IsProgramExecutableExtension(p))
                 .Where(p =>
                 {
                     var fn = Path.GetFileName(p).ToLowerInvariant();
@@ -1936,7 +1958,7 @@ namespace Cyber_behaviour_profiling
             bool deletedSelf = ownPath != "unknown" && profile.DeletedPaths
                 .Any(p => p.ToLowerInvariant() == ownPath);
 
-            yield return Check(SemanticCheckId.OwnBinaryDeleted,
+            yield return Check(SemanticCheckId.OwnProgramDeleted,
                 deletedSelf,
                 ThreatImpact.Malicious,
                 $"Process deleted its own executable from disk");
@@ -1948,7 +1970,7 @@ namespace Cyber_behaviour_profiling
                 isHardIndicator: true);
         }
 
-        private static bool IsBinaryExecutableExtension(string path)
+        private static bool IsProgramExecutableExtension(string path)
         {
             string ext = Path.GetExtension(path);
             return ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
@@ -1970,7 +1992,7 @@ namespace Cyber_behaviour_profiling
             if (profile.ExeDropPaths != null && profile.ExeDropPaths.Keys.Any(p =>
                 IsSuspiciousDropPath(p) &&
                 !IsSelfUpdate(p, processNameNoExt) &&
-                (!browserBenignMode || IsBinaryExecutableExtension(p))))
+                (!browserBenignMode || IsProgramExecutableExtension(p))))
                 return true;
 
             if (profile.DeletedPaths != null)
@@ -1980,7 +2002,7 @@ namespace Cyber_behaviour_profiling
                     string fn = Path.GetFileName(p).ToLowerInvariant();
                     bool isExe = MapToData._executableExtensions.Contains(Path.GetExtension(p));
                     bool isBenign = MapToData._benignDropPrefixes.Any(pfx => fn.StartsWith(pfx));
-                    if (browserBenignMode && !IsBinaryExecutableExtension(p))
+                    if (browserBenignMode && !IsProgramExecutableExtension(p))
                         continue;
 
                     if (isExe && !isBenign && !MapToData.IsRuntimeArtifactPath(p) && IsSuspiciousDropPath(p))
@@ -1999,7 +2021,7 @@ namespace Cyber_behaviour_profiling
                         continue;
                     bool hasDelete = ContainsDeleteVerb(cl);
                     bool hasDelay = ContainsDelayPrimitive(cl) && cl.Contains("del");
-                    bool referencesOwn = ReferencesOwnBinary(cl, ownPath, processNameNoExt);
+                    bool referencesOwn = ReferencesOwnProgram(cl, ownPath, processNameNoExt);
                     bool referencesStaging = ReferencesStagingPath(cl);
                     if ((hasDelete || hasDelay) && (referencesOwn || referencesStaging))
                         return true;
@@ -2433,7 +2455,7 @@ namespace Cyber_behaviour_profiling
         private static string GetCheckName(SemanticCheckId id) => id switch
         {
             SemanticCheckId.SuspiciousExecutionPath => "Suspicious Execution Path",
-            SemanticCheckId.MissingBinaryOnDisk => "Missing Binary on Disk",
+            SemanticCheckId.MissingProgramOnDisk => "Missing Program on Disk",
             SemanticCheckId.ProcessExitedBeforeAnalysis => "Process Exited Before Analysis",
             SemanticCheckId.SystemProcessNotInSystem32 => "System Process Not in System32",
             SemanticCheckId.SpawnedBySuspiciousParent => "Spawned by Suspicious Parent",
@@ -2477,7 +2499,7 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.ExfiltrationChainCollectStageNoExfilYet => "Exfiltration Chain: Collect → Stage (No Exfil Yet)",
             SemanticCheckId.UnsignedWriteToUnrelatedProgramDataFolder => "Unsigned Write to Unrelated ProgramData Folder",
             SemanticCheckId.MultipleStagingLocationsUsed => "Multiple Staging Locations Used",
-            SemanticCheckId.ExecutableBinaryDropped => "Executable Binary Dropped",
+            SemanticCheckId.ExecutableProgramDropped => "Executable Program Dropped",
             SemanticCheckId.ScriptFileDropped => "Script File Dropped",
             SemanticCheckId.MultipleExecutablesDropped => "Multiple Executables Dropped",
             SemanticCheckId.HighFileCreateDeleteChurn => "High File Create-Delete Churn",
@@ -2485,7 +2507,7 @@ namespace Cyber_behaviour_profiling
             SemanticCheckId.WriteDirectoryScatter => "Write Directory Scatter (3+ locations)",
             SemanticCheckId.WideWriteDirectoryScatter => "Wide Write Directory Scatter (5+ locations)",
             SemanticCheckId.ProcessSelfDeletion => "Process Self-Deletion",
-            SemanticCheckId.OwnBinaryDeleted => "Own Binary Deleted",
+            SemanticCheckId.OwnProgramDeleted => "Own Program Deleted",
             SemanticCheckId.ExecutableFileDeleted => "Executable File Deleted",
             SemanticCheckId.LsassMemoryAccess => "LSASS Memory Access",
             SemanticCheckId.RemoteThreadInjection => "Remote Thread Injection",
