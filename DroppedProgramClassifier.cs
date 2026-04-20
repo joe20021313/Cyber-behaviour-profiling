@@ -224,7 +224,7 @@ namespace Cyber_behaviour_profiling
             foreach (char c in stem)
             {
                 if (c == '\u202E')
-                    return "Filename contains RTL override character (U+202E) — typical filename disguise technique";
+                    return "Filename contains RTL override character (U+202E)typical filename disguise technique";
                 if (c == '\u200B' || c == '\u200C' || c == '\u200D')
                     return "Filename contains zero-width Unicode character — used to evade visual detection";
                 

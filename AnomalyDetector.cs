@@ -64,9 +64,9 @@ namespace Cyber_behaviour_profiling
         public static int MinVectorsRequired => K + 1;
 
         private const double PayloadRateCap        = 0.1;
-        private const double UserPayloadRateCap    = 5.0;
+        private const double UserPayloadRateCap    = 50.0;
         private const double SensitiveRateCap      = 0.05;
-        private const double UserSensitiveRateCap  = 2.0;
+        private const double UserSensitiveRateCap  = 500.0;
 
         private const double ShortLivedBurstWriteRate     = 25.0;
         private const double ShortLivedBurstDeleteRate    = 15.0;
@@ -130,11 +130,7 @@ namespace Cyber_behaviour_profiling
                     snapshots = snapshots[^_maxBaselineSnapshots..];
 
                 if (snapshots.Count < MinVectorsRequired)
-                {
-                    InvestigationLog.Write(
-                        $"Skipping baseline '{key}': requires at least {MinVectorsRequired} snapshots, found {snapshots.Count}.");
                     continue;
-                }
 
                 double payloadCap = baseline.Source == "user" ? UserPayloadRateCap : PayloadRateCap;
                 double sensitiveCap = baseline.Source == "user" ? UserSensitiveRateCap : SensitiveRateCap;
@@ -150,11 +146,7 @@ namespace Cyber_behaviour_profiling
                     .Select(d => MetricNames[d])
                     .ToList();
 
-                if (zeroOnlyMetrics.Count > 0)
-                {
-                    InvestigationLog.Write(
-                        $"Baseline '{key}' has zero-only metric dimensions: {string.Join(", ", zeroOnlyMetrics)}.");
-                }
+
 
                 sanitized[key] = new ProcessBaseline
                 {
@@ -202,6 +194,36 @@ namespace Cyber_behaviour_profiling
             var snapshots = history.Count > _maxBaselineSnapshots
                 ? history.GetRange(history.Count - _maxBaselineSnapshots, _maxBaselineSnapshots)
                 : history;
+
+            return new ProcessBaseline
+            {
+                Snapshots = snapshots.Select(s => (double[])s.Clone()).ToArray(),
+                Source    = "user"
+            };
+        }
+
+        public static ProcessBaseline? CaptureBaseline(
+            IEnumerable<ProcessProfile> profiles,
+            IReadOnlyDictionary<int, int> startIndexPerPid)
+        {
+            var aggregated = new List<double[]>();
+            foreach (var profile in profiles)
+            {
+                var history = CopySanitizedHistory(profile);
+                int startIdx = startIndexPerPid != null &&
+                               startIndexPerPid.TryGetValue(profile.ProcessId, out var s)
+                    ? s : 0;
+                if (startIdx >= history.Count)
+                    continue;
+                aggregated.AddRange(history.Skip(startIdx));
+            }
+
+            if (aggregated.Count < MinVectorsRequired)
+                return null;
+
+            var snapshots = aggregated.Count > _maxBaselineSnapshots
+                ? aggregated.GetRange(aggregated.Count - _maxBaselineSnapshots, _maxBaselineSnapshots)
+                : aggregated;
 
             return new ProcessBaseline
             {
@@ -344,10 +366,19 @@ namespace Cyber_behaviour_profiling
             double[] candidate, List<double[]> sessionHistory, ProcessBaseline? baseline)
         {
             var result = new AnomalyResult();
-            
-            
+
+            double[]? baselineMaxPerDim = null;
+            if (baseline?.Snapshots is { Length: > 0 })
+            {
+                baselineMaxPerDim = new double[MetricNames.Length];
+                foreach (var s in baseline.Snapshots)
+                    for (int d = 0; d < MetricNames.Length && d < s.Length; d++)
+                        if (s[d] > baselineMaxPerDim[d]) baselineMaxPerDim[d] = s[d];
+            }
+
             double burstMinRatio = baseline != null ? 1.5 : 1.0;
-            if (TryEvaluateShortLivedBurst(candidate, burstMinRatio, out string ShortLivedBurstReason, out int ShortLivedBurstMetric,
+            if (TryEvaluateShortLivedBurst(candidate, burstMinRatio, baselineMaxPerDim,
+                out string ShortLivedBurstReason, out int ShortLivedBurstMetric,
                 out double ShortLivedBurstValue, out double ShortLivedBurstThreshold))
             {
                 result.AnomalyDetected = true;
@@ -366,21 +397,14 @@ namespace Cyber_behaviour_profiling
                 foreach (var s in baseline.Snapshots)
                     if (s.Length == MetricNames.Length) fullRef.Add(s);
 
-                if (baseline.Source != "user")
+                double payloadCap = baseline.Source == "user" ? UserPayloadRateCap : PayloadRateCap;
+                double sensitiveCap = baseline.Source == "user" ? UserSensitiveRateCap : SensitiveRateCap;
+                if ((candidate.Length > 2 && candidate[2] > payloadCap) ||
+                    (candidate.Length > 3 && candidate[3] > sensitiveCap))
                 {
-                    double payloadCap   = PayloadRateCap;
-                    double sensitiveCap = SensitiveRateCap;
-                    if (candidate.Length > 2 && candidate[2] > payloadCap)
-                    {
-                        candidate = (double[])candidate.Clone();
-                        candidate[2] = payloadCap;
-                        if (candidate.Length > 3) candidate[3] = Math.Min(candidate[3], sensitiveCap);
-                    }
-                    else if (candidate.Length > 3 && candidate[3] > sensitiveCap)
-                    {
-                        candidate = (double[])candidate.Clone();
-                        candidate[3] = sensitiveCap;
-                    }
+                    candidate = (double[])candidate.Clone();
+                    if (candidate.Length > 2) candidate[2] = Math.Min(candidate[2], payloadCap);
+                    if (candidate.Length > 3) candidate[3] = Math.Min(candidate[3], sensitiveCap);
                 }
             }
             else
@@ -430,6 +454,7 @@ namespace Cyber_behaviour_profiling
         private static bool TryEvaluateShortLivedBurst(
             IReadOnlyList<double> candidate,
             double minRatio,
+            double[]? baselineMaxPerDim,
             out string reason,
             out int metricIndex,
             out double metricValue,
@@ -448,6 +473,9 @@ namespace Cyber_behaviour_profiling
                 double currentThreshold = ShortLivedBurstThresholds[i];
                 if (currentThreshold <= 0.0)
                     continue;
+
+                if (baselineMaxPerDim != null && i < baselineMaxPerDim.Length)
+                    currentThreshold = Math.Max(currentThreshold, baselineMaxPerDim[i] * 1.5);
 
                 double value = candidate[i];
                 double ratio = value / currentThreshold;

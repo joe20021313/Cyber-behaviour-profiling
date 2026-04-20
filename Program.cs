@@ -127,7 +127,7 @@ public class FileOperationsData
     public List<string> suspicious_overwrites { get; set; }
     public List<string> executable_extensions { get; set; }
     public List<string> font_extensions { get; set; }
-    public List<string> benign_drop_prefixes { get; set; }
+    public List<string> safe_drop_prefixes { get; set; }
     public List<string> runtime_artifact_markers { get; set; }
     public List<string> noise_extensions { get; set; }
     public List<string> noise_paths { get; set; }
@@ -141,7 +141,7 @@ public class RegistryData
     public List<string> tampering { get; set; }
     public List<string> uac_bypass { get; set; }
     public List<string> credential_access { get; set; }
-    public List<string> benign_services { get; set; }
+    public List<string> safe_services { get; set; }
 }
 
 public class NetworkData
@@ -331,12 +331,12 @@ public static class MapToData
     public static List<string> _runtimeArtifactMarkers = new();
     public static HashSet<string> _executableExtensions = new(StringComparer.OrdinalIgnoreCase);
     public static HashSet<string> _fontExtensions = new(StringComparer.OrdinalIgnoreCase);
-    public static List<string> _benignDropPrefixes = new();
+    public static List<string> _safeDropPrefixes = new();
     public static HashSet<string> _noiseExtensions = new(StringComparer.OrdinalIgnoreCase);
     public static List<string> _noisePaths = new();
     public static HashSet<string> _malwareArtifacts = new(StringComparer.OrdinalIgnoreCase);
     public static List<string> _browserCredentialDirs = new();
-    public static List<string> _benignServices = new();
+    public static List<string> _safeServices = new();
     public static HashSet<string> _officeApps = new(StringComparer.OrdinalIgnoreCase);
     public static HashSet<string> _browserProcesses = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> _browserProcessFallbackNames = new(StringComparer.OrdinalIgnoreCase)
@@ -561,7 +561,7 @@ public static class MapToData
         _fontExtensions = new HashSet<string>(
             data.file_operations?.font_extensions ?? new(),
             StringComparer.OrdinalIgnoreCase);
-        _benignDropPrefixes = data.file_operations?.benign_drop_prefixes?
+        _safeDropPrefixes = data.file_operations?.safe_drop_prefixes?
             .Select(p => p.ToLowerInvariant()).ToList() ?? new();
         _noiseExtensions = new HashSet<string>(
             data.file_operations?.noise_extensions ?? new(),
@@ -573,7 +573,7 @@ public static class MapToData
             StringComparer.OrdinalIgnoreCase);
         _browserCredentialDirs = data.file_operations?.browser_credential_dirs?
             .Select(s => s.ToLowerInvariant()).ToList() ?? new();
-        _benignServices = data.registry?.benign_services?
+        _safeServices = data.registry?.safe_services?
             .Select(s => s.ToLowerInvariant()).ToList() ?? new();
         _officeApps = new HashSet<string>(
             data.processes?.office_apps ?? new(),
@@ -653,7 +653,7 @@ public static class MapToData
                 profile.WriteDirectories.AddOrUpdate(dir, 1, (_, c) => c + 1);
 
             bool isExecutable = _executableExtensions.Contains(Path.GetExtension(lowerPath));
-            bool isBenignDrop = _benignDropPrefixes.Any(p => fileName.StartsWith(p));
+            bool isSafeDrop = _safeDropPrefixes.Any(p => fileName.StartsWith(p));
             bool isRuntimeArtifact = IsRuntimeArtifactPath(filePath);
             if (isRuntimeArtifact)
             {
@@ -661,7 +661,7 @@ public static class MapToData
                 if (isExecutable)
                     profile.RuntimeArtifactPaths.TryAdd(filePath, 0);
             }
-            else if (isExecutable && !isBenignDrop)
+            else if (isExecutable && !isSafeDrop)
             {
                 profile.TotalPayloadLikeWrites++;
                 profile.ExeDropPaths.TryAdd(filePath, 0);
@@ -674,14 +674,14 @@ public static class MapToData
             if (!isAnomalyNoise)
                 profile.TotalFilteredDeletes++;
 
-            bool isBenignDrop = _benignDropPrefixes.Any(p => fileName.StartsWith(p));
+            bool isSafeDrop = _safeDropPrefixes.Any(p => fileName.StartsWith(p));
             bool isRuntimeArtifact = IsRuntimeArtifactPath(filePath);
             if (isRuntimeArtifact)
             {
                 profile.TotalRuntimeArtifactDeletes++;
                 profile.DeletedRuntimeArtifacts.Add(filePath);
             }
-            else if (!isBenignDrop)
+            else if (!isSafeDrop)
                 profile.DeletedPaths.Add(filePath);
         }
 
@@ -758,8 +758,8 @@ public static class MapToData
 
         if (rule.Pattern == "system\\currentcontrolset\\services")
         {
-            if (operation == "Open" || _benignServices.Any(s => lowerKey.Contains(s)))
-                return;
+            if (operation == "Open" || _safeServices.Any(s => lowerKey.Contains(s)))
+               return;
         }
 
         AddEventToProfile(pid, processName, "Registry", rule.Pattern, registryKey, rule.Category, "Registry");

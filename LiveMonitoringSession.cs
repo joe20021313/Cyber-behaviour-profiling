@@ -728,10 +728,7 @@ namespace Cyber_behaviour_profiling
 
         private MonitoringSessionResult BuildResult()
         {
-            InvestigationLog.Section("Result Build");
             var analysisProfiles = MapToData.GetAnalysisProfiles();
-            InvestigationLog.WriteStage("session",
-                $"Building final result from {analysisProfiles.Count} collected profile(s) for {string.Join(", ", _targetProcesses.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))}.");
 
             var profileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var p in analysisProfiles)
@@ -754,12 +751,8 @@ namespace Cyber_behaviour_profiling
             foreach (var profile in analysisProfiles)
             {
                 profile.DirectorySnapshotBefore = _baselineSnapshot;
-                InvestigationLog.WriteStage("session",
-                    $"Finalizing profile pid={profile.ProcessId} process='{profile.ProcessName}' events={profile.EventTimeline.Count}.");
                 var report = BehaviorAnalyzer.Analyze(profile);
                 var narrative = AttackNarrator.BuildNarrative(profile, report);
-                InvestigationLog.WriteStage("session",
-                    $"Narrative built pid={profile.ProcessId} process='{profile.ProcessName}' grade={narrative.Grade} steps={narrative.Timeline.Count} reasons={narrative.DecisionReasons.Count}.");
                 narratives.Add(narrative);
             }
 
@@ -772,14 +765,12 @@ namespace Cyber_behaviour_profiling
 
             AttackNarrative top = narratives.Count > 0 ? narratives[0] : null;
             string overallGrade = top?.Grade ?? "SAFE";
-            InvestigationLog.EndSession(overallGrade, analysisProfiles.Count, narratives.Count);
-            string diagnosticTrace = InvestigationLog.GetContents();
 
             return new MonitoringSessionResult
             {
                 TargetProcesses = _targetProcesses.ToList(),
                 OverallGrade = overallGrade,
-                DiagnosticTrace = diagnosticTrace,
+                DiagnosticTrace = string.Empty,
 
                 Narratives = narratives,
                 MergedProfiles = analysisProfiles

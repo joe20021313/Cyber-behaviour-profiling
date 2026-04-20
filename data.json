@@ -24,7 +24,6 @@
       "\\keepass2\\",
       "\\microsoft\\windows nt\\winlogon\\",
       "\\thunderbird\\profiles\\",
-      "\\microsoft\\windows\\recent\\",
       "\\windows\\system32\\config\\",
       "\\windows\\ntds\\",
       "\\microsoft\\windows\\start menu\\programs\\startup\\",
@@ -130,7 +129,7 @@
     "font_extensions": [
       ".ttf", ".otf", ".fon", ".fnt", ".ttc", ".eot"
     ],
-    "benign_drop_prefixes": [
+    "safe_drop_prefixes": [
       "__psscriptpolicytest_",
       "__pssessionconfigurationtest_"
     ],
@@ -206,7 +205,7 @@
       "software\\realvnc",
       "software\\tightvnc"
     ],
-    "benign_services": [
+    "safe_services": [
       "services\\winsock",
       "services\\tcpip",
       "services\\dnscache",
@@ -466,9 +465,11 @@
       "loot", "ntlm", "hash", "shadow", "stolen", "harvest", "exfil", "pwned", "leaked", "dump"
     ],
     "generic_shells": [
-      "explorer", "explorer.exe", "cmd", "cmd.exe",
-      "powershell", "powershell.exe", "pwsh", "pwsh.exe",
-      "wscript", "wscript.exe", "cscript", "cscript.exe"
+      "explorer", "explorer.exe",
+      "searchhost", "searchhost.exe",
+      "searchapp", "searchapp.exe",
+      "startmenuexperiencehost", "startmenuexperiencehost.exe",
+      "sihost", "sihost.exe"
     ],
     "thresholds": {
       "burst_seconds": 2.0,
@@ -477,7 +478,7 @@
       "massive_count_threshold": 1000,
       "massive_count_window_seconds": 60,
       "knn_scale_floors": [0.1, 0.05, 0.02, 0.05],
-      "max_baseline_snapshots": 50,
+      "max_baseline_snapshots": 500,
       "max_anomaly_history": 120,
       "snapshot_observation_retention_minutes": 10,
       "z_threshold": 2.5,

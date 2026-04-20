@@ -58,6 +58,7 @@ namespace Cyber_behaviour_profiling
         private const uint ErrorSuccess = 0;
         private const uint WtdRevokeWholeChain = 0x00000001;
         private const uint TrustENoSignature = 0x800B0100;
+        private const uint TrustESubjectNotTrusted = 0x800B0004; // Zone.Identifier ADS (downloaded from internet, not unblocked)
         private const uint CertERevoked = 0x800B010C;
         private const uint CryptENoRevocationCheck = 0x80092012;
         private const uint CryptERevocationOffline = 0x80092013;
@@ -198,6 +199,28 @@ namespace Cyber_behaviour_profiling
                     issuerName,
                     thumbprint,
                     BuildRevocationUnknownSummary(publisherName));
+            }
+
+            // TRUST_E_SUBJECT_NOT_TRUSTED means the Authenticode hash check passed but Windows
+            // zone policy blocked trust (Zone.Identifier ADS — file downloaded from internet).
+            // If the chain independently validates, the signature is genuinely valid.
+            if (authResult == TrustESubjectNotTrusted && chainValid)
+            {
+                bool isTrusted = MatchesTrustedPublisher(publisherName);
+                return CreateResult(
+                    isTrusted
+                        ? SignatureTrustState.TrustedPublisherVerified
+                        : SignatureTrustState.ValidSignatureUntrustedPublisher,
+                    hasSignature: true,
+                    isCryptographicallyValid: true,
+                    isTrustedPublisher: isTrusted,
+                    publisherName,
+                    issuerName,
+                    thumbprint,
+                    isTrusted
+                        ? BuildTrustedPublisherSummary(publisherName)
+                        : BuildUntrustedPublisherSummary(publisherName),
+                    hresult: authResult);
             }
 
             bool cryptographicallyValid = authResult == ErrorSuccess && (certificate == null || chainValid);

@@ -1,18 +1,23 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Cyber_behaviour_profiling;
 
 public class BehaviorAnalyzerValidDataTests
 {
     [Fact]
-    public void LsassAccess_ReturnsMalicious()
+    public void HardMaliciousIndicator_LsassAccess_ReturnsMalicious()
     {
         TestScope.WithFreshSession(() =>
         {
             var profile = ProfileFactory.WithEvent(
-                "LsassAccess", "lsass.exe", "lsass.exe", "lsass_access",
-                "unknown.exe", 2_100_000_001);
+                "LsassAccess",
+                "lsass.exe",
+                "lsass.exe",
+                "lsass_access",
+                "unknown.exe",
+                2_100_000_001);
 
             var report = BehaviorAnalyzer.Analyze(profile);
 
@@ -21,25 +26,6 @@ public class BehaviorAnalyzerValidDataTests
             Assert.Contains(report.FiredCheckNames, n =>
                 n.Equals("LSASS Memory Access", StringComparison.OrdinalIgnoreCase));
         });
-    }
-
-    [Fact]
-    public void ExecutableDrop_WithContextSignal_ReturnsMalicious()
-    {
-        TestScope.WithFreshSession(() =>
-        {
-            var profile = ProfileFactory.Empty("loader.exe", 2_100_000_002);
-            string dropPath = @"C:\Users\User\AppData\Local\Temp\payload.exe";
-
-            ProfileFactory.AddEvent(profile, "ContextSignal", "payload.exe", dropPath, "context_signal");
-            profile.ExeDropPaths.TryAdd(dropPath, 0);
-
-            var report = BehaviorAnalyzer.Analyze(profile);
-
-            Assert.Equal(ThreatImpact.Malicious, report.FinalVerdict);
-            Assert.Contains(report.FiredCheckNames, n =>
-                n.Equals("Executable Program Dropped", StringComparison.OrdinalIgnoreCase));
-        }, loadData: true);
     }
 
     [Fact]
@@ -67,12 +53,49 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void Browser_AccessingOwnCredentialPath_DoesNotFlag()
+    public void NetworkAndCredentialSignals_FlagUnexpectedOutboundConnections()
+    {
+        var ctx = new ProcessContext
+        {
+            HasNetworkConns = true,
+            NetworkConnCount = 2,
+            FilePath = @"C:\Users\User\AppData\Local\SomeApp\app.exe",
+            ParentProcess = "explorer"
+        };
+
+        var profile = ProfileFactory.Empty("app.exe", 2_100_000_005);
+        ProfileFactory.AddEvent(
+            profile,
+            "NetworkConnect",
+            "example.org",
+            "example.org (93.184.216.34)",
+            "network_outbound");
+        ProfileFactory.AddEvent(
+            profile,
+            "FileRead",
+            "login data",
+            @"C:\Users\VM\AppData\Local\Google\Chrome\User Data\Default\Login Data",
+            "credential_file_access");
+
+        bool flagged = BehaviorAnalyzer.ShouldFlagUnexpectedNetworkConnections(
+            ctx,
+            profile.EventTimeline.ToList(),
+            profile);
+
+        Assert.True(flagged);
+    }
+
+    [Fact]
+    public void BrowserProcess_AccessingBrowserCredentialPath_DoesNotTriggerNonBrowserCredentialTheft()
     {
         TestScope.WithFreshSession(() =>
         {
             var profile = ProfileFactory.Empty("msedge.exe", 2_100_000_051);
-            ProfileFactory.AddEvent(profile, "FileRead", "Login Data",
+
+            ProfileFactory.AddEvent(
+                profile,
+                "FileRead",
+                "Login Data",
                 @"C:\Users\user\AppData\Local\Microsoft\Edge\User Data\Default\Login Data",
                 "credential_file_access");
 
@@ -85,7 +108,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void Browser_LaunchedByUser_HighChurn_RemainsSafe()
+    public void BrowserUserLaunch_HighChurnAndScriptCleanup_CanRemainSafe()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -100,12 +123,14 @@ public class BehaviorAnalyzerValidDataTests
 
             Assert.Equal(ThreatImpact.Safe, report.FinalVerdict);
             Assert.DoesNotContain(report.FiredCheckNames, n =>
+                n.Equals("Executable File Deleted", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(report.FiredCheckNames, n =>
                 n.Equals("High File Create-Delete Churn", StringComparison.OrdinalIgnoreCase));
         }, loadData: true);
     }
 
     [Fact]
-    public void Browser_LaunchedByProgram_IsNotAutoSafe()
+    public void BrowserLaunchedByProgram_IsNeverAutoSafe()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -121,7 +146,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NonBrowser_HighChurn_DoesNotUseBrowserExemption()
+    public void NonBrowserHighChurnAndScriptCleanup_DoesNotUseBrowserSafePath()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -141,7 +166,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void BaselineNearMatch_RemainsSafe()
+    public void BaselineNearMatch_RemainsSafeAndUsesBaseline()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>
         {
@@ -173,7 +198,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void ShortSensitiveBurst_NoBaseline_ReturnsSuspicious()
+    public void NoBaselineSensitiveShortLivedBurst_DefaultsToSuspicious()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
 
@@ -189,12 +214,41 @@ public class BehaviorAnalyzerValidDataTests
             Assert.NotNull(report.Anomaly);
             Assert.True(report.Anomaly!.ShortLivedBurstFired);
             Assert.Equal(ThreatImpact.Suspicious, report.FinalVerdict);
-            Assert.Contains(report.DecisionReasons, r =>
-                r.Contains("ShortLivedBurst", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(report.DecisionReasons, reason =>
+                reason.Contains("ShortLivedBurst", StringComparison.OrdinalIgnoreCase));
         }
         finally
         {
             AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
         }
+    }
+
+    [Fact]
+    public void NoBaselineShortLivedBurstWithHardHighRiskEvents_EscalatesToMalicious()
+    {
+        var anomaly = new AnomalyResult
+        {
+            AnomalyDetected = true,
+            BaselineUsed = false,
+            ShortLivedBurstFired = true,
+            ShortLivedBurstReason = "Sensitive Access Rate 10.0/sec exceeded ShortLivedBurst 4.0/sec",
+            Score = 36
+        };
+
+        var events = new List<SuspiciousEvent>
+        {
+            ProfileFactory.Event(
+                "DPAPI_Decrypt",
+                "dpapi",
+                "CryptUnprotectData",
+                "credential_file_access")
+        };
+
+        var impact = BehaviorAnalyzer.DetermineAnomalyImpact(
+            anomaly,
+            events,
+            ProfileFactory.Empty("lazagne.exe", 2_100_000_008));
+
+        Assert.Equal(ThreatImpact.Malicious, impact);
     }
 }

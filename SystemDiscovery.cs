@@ -76,13 +76,9 @@ namespace Cyber_behaviour_profiling
                         catch { }
                     }
                 }
-                catch (Exception ex)
-                {
-                    InvestigationLog.Write($"  Snapshot error for '{dir}': {ex.Message}");
-                }
+                catch { }
             }
 
-            InvestigationLog.Write($"  Snapshot captured {snapshot.Files.Count} files");
             return snapshot;
         }
 
@@ -241,16 +237,10 @@ namespace Cyber_behaviour_profiling
                             finding.Severity = FindingSeverity.Alert;
                     }
 
-                    string logLabel = verdict.Verdict == DroppedProgramVerdict.Malicious ? "ALERT"
-                                    : verdict.Verdict == DroppedProgramVerdict.Suspicious ? "WARN" : "INFO";
-                    InvestigationLog.Write($"  [{logLabel}] " +
-                        $"New {(supportsEmbeddedSignature ? "program" : "script")}: {file.FullPath} [{verdict.RuleId}]");
-
                     result.Findings.Add(finding);
                 }
                 else if (MapToData._malwareArtifacts.Contains(name))
                 {
-                    InvestigationLog.Write($"  [ALERT] Known malware artifact: {file.FullPath}");
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"Known malware artifact appeared: {file.FullPath}",
@@ -261,7 +251,6 @@ namespace Cyber_behaviour_profiling
                 else if (sensitiveDirs?.Any(d =>
                     file.FullPath.ToLowerInvariant().Contains(d.ToLowerInvariant())) == true)
                 {
-                    InvestigationLog.Write($"  [INFO] New file in sensitive directory: {file.FullPath}");
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"New file in sensitive directory: {file.FullPath} ({file.Size:N0} bytes)",
@@ -283,7 +272,7 @@ namespace Cyber_behaviour_profiling
                     ? GetFileSignatureInfo(file.FullPath)
                     : null;
 
-                InvestigationLog.Write($"  Modified program/script: {file.FullPath} Trust={sig?.ShortLabel ?? "n/a"}");
+
 
                 
                 
@@ -306,12 +295,10 @@ namespace Cyber_behaviour_profiling
                             Description = verdict.ChildReason,
                             Severity = sev
                         });
-                    InvestigationLog.Write($"  [{(sev == FindingSeverity.Alert ? "ALERT" : "WARN")}] Modified program flagged: {verdict.RuleId}");
                     result.Findings.Add(finding);
                 }
                 else
                 {
-                    InvestigationLog.Write($"  [INFO] Modified program/script (no malicious indicators)");
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = $"{(supportsEmbeddedSignature ? "Program" : "Script")} modified during monitoring: {file.FullPath}",
@@ -327,7 +314,6 @@ namespace Cyber_behaviour_profiling
                 string ext = Path.GetExtension(path).ToLowerInvariant();
                 if (MapToData._executableExtensions.Contains(ext))
                 {
-                    InvestigationLog.Write($"  [WARNING] Executable deleted: {path}");
                     result.Findings.Add(new InvestigationFinding
                     {
                         Description = SignatureVerifier.SupportsEmbeddedSignature(path)
@@ -347,10 +333,6 @@ namespace Cyber_behaviour_profiling
                                      warningCount > 0 ? SuspicionLevel.Low :
                                                         SuspicionLevel.None;
 
-            InvestigationLog.Write($"  Directory investigation complete: " +
-                                   $"{alertCount} alerts, {warningCount} warnings, " +
-                                   $"suspicion={result.OverallSuspicion}");
-
             return result;
         }
 
@@ -362,17 +344,10 @@ namespace Cyber_behaviour_profiling
             int depth = 0)
         {
             var result = new InvestigationResult();
-            InvestigationLog.Section("NETWORK EVENT INVESTIGATION");
-
             string destination = networkEvent.RawData ?? networkEvent.MatchedIndicator ?? "unknown";
-            InvestigationLog.Write($"  Investigating network connection to: {destination}");
-            InvestigationLog.Write($"  Event time: {networkEvent.Timestamp:HH:mm:ss.fff}");
 
             if (beforeSnapshot == null || afterSnapshot == null)
-            {
-                InvestigationLog.Write("  No directory snapshots available — skipping file correlation");
                 return result;
-            }
 
             var diff = CompareSnapshots(beforeSnapshot, afterSnapshot);
 
@@ -381,9 +356,6 @@ namespace Cyber_behaviour_profiling
                 .Where(f => Math.Abs((f.LastWriteUtc - networkTime.ToUniversalTime()).TotalSeconds) < 10)
                 .ToList();
             var informationalFiles = new List<FileSnapshot>();
-
-            if (newFilesNearNetwork.Count > 0)
-                InvestigationLog.Write($"  Found {newFilesNearNetwork.Count} new files within ±10s of network event");
 
             foreach (var file in newFilesNearNetwork)
             {
@@ -395,26 +367,47 @@ namespace Cyber_behaviour_profiling
 
                 if (MapToData._executableExtensions.Contains(ext))
                 {
+                    bool isSuspiciousDomain = networkEvent.Category is "network_c2" or "dns_c2";
+
+                    SignatureVerificationResult? sig = supportsEmbeddedSignature
+                        ? GetFileSignatureInfo(file.FullPath)
+                        : null;
+
+                    var classifierVerdict = DroppedProgramClassifier.Classify(file.FullPath, sig);
+
+                    FindingSeverity severity;
+                    if (isSuspiciousDomain || classifierVerdict.Verdict == DroppedProgramVerdict.Malicious)
+                        severity = FindingSeverity.Alert;
+                    else if (classifierVerdict.Verdict == DroppedProgramVerdict.Suspicious)
+                        severity = FindingSeverity.Warning;
+                    else
+                        severity = FindingSeverity.Info;
+
+                    string trustLabel = sig != null ? $" (trust: {sig.ShortLabel})" : "";
+                    string description = supportsEmbeddedSignature
+                        ? $"Program appeared after connecting to {destination}: {file.FullPath}{trustLabel}"
+                        : $"Script appeared after connecting to {destination}: {file.FullPath}";
+
                     var finding = new InvestigationFinding
                     {
-                        Description = supportsEmbeddedSignature
-                            ? $"Program appeared after connecting to {destination}: {file.FullPath}"
-                            : $"Script appeared after connecting to {destination}: {file.FullPath}",
+                        Description = description,
                         ArtifactPath = file.FullPath,
-                        Severity = FindingSeverity.Alert
+                        Severity = severity
                     };
 
-                    if (supportsEmbeddedSignature)
-                    {
-                        SignatureVerificationResult signature = GetFileSignatureInfo(file.FullPath);
-                        InvestigationLog.Write($"  [ALERT] Executable appeared after network event: {file.FullPath} (trust={signature.ShortLabel})");
-                        finding.Description += $" (trust: {signature.ShortLabel})";
-                        AppendSignatureContext(finding, signature, elevateTrustFailures: false);
-                    }
-                    else
-                    {
-                        InvestigationLog.Write($"  [ALERT] Script appeared after network event: {file.FullPath}");
-                    }
+                    if (classifierVerdict.ChildReason != null)
+                        finding.Children.Add(new InvestigationFinding
+                        {
+                            Description = classifierVerdict.ChildReason,
+                            Severity = severity
+                        });
+
+                    if (isSuspiciousDomain)
+                        finding.Children.Add(new InvestigationFinding
+                        {
+                            Description = $"Connection destination '{destination}' is on the suspicious-domain list",
+                            Severity = FindingSeverity.Alert
+                        });
 
                     if (MapToData._malwareArtifacts.Contains(name))
                     {
@@ -423,13 +416,17 @@ namespace Cyber_behaviour_profiling
                             Description = $"Filename '{name}' matches known malware tool",
                             Severity = FindingSeverity.Alert
                         });
+                        finding.Severity = FindingSeverity.Alert;
                     }
+
+                    if (supportsEmbeddedSignature && sig != null)
+                        AppendSignatureContext(finding, sig, elevateTrustFailures: false);
 
                     result.Findings.Add(finding);
                 }
                 else
                 {
-                    InvestigationLog.Write($"  [INFO] New file near network event: {file.FullPath}");
+    
                     informationalFiles.Add(file);
                 }
             }
@@ -476,7 +473,7 @@ namespace Cyber_behaviour_profiling
 
             if (droppedToDownloadDirs.Count > 0 && droppedToDownloadDirs.Count != newFilesNearNetwork.Count)
             {
-                InvestigationLog.Write($"  {droppedToDownloadDirs.Count} new files in download/staging directories");
+
                 foreach (var f in droppedToDownloadDirs.Take(5))
                 {
                     string ext = Path.GetExtension(f.FullPath).ToLowerInvariant();
@@ -494,7 +491,6 @@ namespace Cyber_behaviour_profiling
 
             if (result.Findings.Count == 0)
             {
-                InvestigationLog.Write("  No suspicious file activity correlated with network event");
                 result.OverallSuspicion = SuspicionLevel.None;
             }
             else
@@ -505,8 +501,6 @@ namespace Cyber_behaviour_profiling
                                               ? SuspicionLevel.Low : SuspicionLevel.None;
             }
 
-            InvestigationLog.Write($"  Network investigation complete: " +
-                                   $"suspicion={result.OverallSuspicion}");
             return result;
         }
 

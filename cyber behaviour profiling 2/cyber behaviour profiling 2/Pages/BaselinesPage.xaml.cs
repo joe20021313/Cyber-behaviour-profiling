@@ -28,7 +28,7 @@ namespace cyber_behaviour_profiling_2.Pages
         private string _targetProcess = "";
         private ProcessBaseline? _capturedBaseline;
         private List<string> _processItems = new();
-        private int _recordingStartSnapshotCount;
+        private readonly Dictionary<int, int> _recordingStartPerPid = new();
         private int _lastMeaningfulSnapshotCount;
         private DateTime _lastMeaningfulProgressAt;
 
@@ -132,7 +132,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 }
                 if (!_targetProcess.EndsWith(".exe")) _targetProcess += ".exe";
                 _capturedBaseline = null;
-                _recordingStartSnapshotCount = 0;
+                _recordingStartPerPid.Clear();
                 _lastMeaningfulSnapshotCount = 0;
                 _lastMeaningfulProgressAt = DateTime.Now;
 
@@ -149,11 +149,12 @@ namespace cyber_behaviour_profiling_2.Pages
                     }
                 }
 
-                ProcessProfile? currentProfile = FindLatestProfile(nameNoExt);
-                _recordingStartSnapshotCount = GetSnapshotCount(currentProfile);
+                var matchingProfiles = FindAllMatchingProfiles(nameNoExt);
+                foreach (var p in matchingProfiles)
+                    _recordingStartPerPid[p.ProcessId] = GetSnapshotCount(p);
 
                 bool alreadyMonitored = LiveMonitoringSession.ActiveInstance != null &&
-                    currentProfile != null;
+                    matchingProfiles.Count > 0;
 
                 if (!alreadyMonitored)
                 {
@@ -199,15 +200,12 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private const int ThinBaselineThreshold = 20;
 
-        private bool TryCaptureFromProfile(ProcessProfile profile, int meaningfulCount, string reason)
+        private bool TryCaptureFromProfiles(List<ProcessProfile> profiles, int snapshotCount, string reason)
         {
-            if (meaningfulCount < AnomalyDetector.MinVectorsRequired)
+            if (snapshotCount < AnomalyDetector.MinVectorsRequired)
                 return false;
 
-            _capturedBaseline = AnomalyDetector.CaptureBaseline(
-                profile,
-                _recordingStartSnapshotCount,
-                meaningfulOnly: true);
+            _capturedBaseline = AnomalyDetector.CaptureBaseline(profiles, _recordingStartPerPid);
 
             if (_capturedBaseline == null)
                 return false;
@@ -219,7 +217,7 @@ namespace cyber_behaviour_profiling_2.Pages
 
             StatusText.Text = _capturedBaseline.Snapshots.Length < ThinBaselineThreshold
                 ? $"Heads up — only {_capturedBaseline.Snapshots.Length} data points captured. A longer recording gives better accuracy.\n{reason}. Click Save to keep it.\n\n{metricSummary}"
-                : $"{reason}. {meaningfulCount} data points captured. Click Save to keep it.\n\n{metricSummary}";
+                : $"{reason}. {_capturedBaseline.Snapshots.Length} data points captured. Click Save to keep it.\n\n{metricSummary}";
 
             return true;
         }
@@ -227,22 +225,20 @@ namespace cyber_behaviour_profiling_2.Pages
         private void StopAndCaptureIfPossible()
         {
             string key = Path.GetFileNameWithoutExtension(_targetProcess);
-            var matchingProfile = FindLatestProfile(key);
-            if (matchingProfile == null)
+            var matchingProfiles = FindAllMatchingProfiles(key);
+            if (matchingProfiles.Count == 0)
             {
                 CancelRecording();
                 return;
             }
 
-            int meaningfulCount = AnomalyDetector.CountMeaningfulSnapshots(
-                matchingProfile,
-                _recordingStartSnapshotCount);
+            int snapshotCount = GetAggregateDeltaSnapshotCount(matchingProfiles);
 
-            if (TryCaptureFromProfile(matchingProfile, meaningfulCount, "Stopped recording"))
+            if (TryCaptureFromProfiles(matchingProfiles, snapshotCount, "Stopped recording"))
                 return;
 
             StopTempSession();
-            SetError($"Not enough data yet — got {meaningfulCount} of {AnomalyDetector.MinVectorsRequired} required data points. Try letting the process run a bit longer.");
+            SetError($"Not enough data yet — got {snapshotCount} of {AnomalyDetector.MinVectorsRequired} required data points. Try letting the process run a bit longer.");
         }
 
         private void RecordTimer_Tick(object? sender, EventArgs e)
@@ -250,75 +246,81 @@ namespace cyber_behaviour_profiling_2.Pages
             if (_state != RecordState.Recording) return;
 
             string key = Path.GetFileNameWithoutExtension(_targetProcess);
-            var matchingProfile = MapToData.ActiveProfiles.Values
-                .Where(p => Path.GetFileNameWithoutExtension(p.ProcessName ?? "").Equals(key, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(p => p.FirstSeen)
-                .FirstOrDefault();
+            var matchingProfiles = FindAllMatchingProfiles(key);
 
-            if (matchingProfile == null)
+            if (matchingProfiles.Count == 0)
             {
-
                 StatusText.Text = $"Waiting for {_targetProcess} to do something...";
                 return;
             }
 
-            int count  = matchingProfile.AnomalyHistory.Count;
+            foreach (var p in matchingProfiles)
+                _recordingStartPerPid.TryAdd(p.ProcessId, 0);
+
+            int snapshotCount = GetAggregateDeltaSnapshotCount(matchingProfiles);
             int target = AnomalyDetector.MaxSnapshots;
 
-            int meaningfulCount = AnomalyDetector.CountMeaningfulSnapshots(
-                matchingProfile,
-                _recordingStartSnapshotCount);
-
-            if (meaningfulCount > _lastMeaningfulSnapshotCount)
+            if (snapshotCount > _lastMeaningfulSnapshotCount)
             {
-                _lastMeaningfulSnapshotCount = meaningfulCount;
+                _lastMeaningfulSnapshotCount = snapshotCount;
                 _lastMeaningfulProgressAt = DateTime.Now;
             }
 
-            if (meaningfulCount >= target)
+            if (snapshotCount >= target)
             {
-                if (TryCaptureFromProfile(
-                    matchingProfile,
-                    meaningfulCount,
+                if (TryCaptureFromProfiles(
+                    matchingProfiles,
+                    snapshotCount,
                     "Target vector count reached"))
                     return;
             }
 
             bool processGone = Process.GetProcessesByName(key).Length == 0;
-            if (processGone && meaningfulCount >= AnomalyDetector.MinVectorsRequired)
+            if (processGone && snapshotCount >= AnomalyDetector.MinVectorsRequired)
             {
-                if (TryCaptureFromProfile(
-                    matchingProfile,
-                    meaningfulCount,
+                if (TryCaptureFromProfiles(
+                    matchingProfiles,
+                    snapshotCount,
                     "Process exited"))
                     return;
             }
 
             bool stalled =
-                meaningfulCount >= AnomalyDetector.MinVectorsRequired &&
+                snapshotCount >= AnomalyDetector.MinVectorsRequired &&
                 DateTime.Now - _lastMeaningfulProgressAt >= SnapshotStallAutoCaptureWindow;
             if (stalled)
             {
-                if (TryCaptureFromProfile(
-                    matchingProfile,
-                    meaningfulCount,
+                if (TryCaptureFromProfiles(
+                    matchingProfiles,
+                    snapshotCount,
                     $"No new snapshot vectors for {SnapshotStallAutoCaptureWindow.TotalSeconds:0}s"))
                     return;
             }
 
             string exitHint = processGone
-                ? $" Process has exited — need {Math.Max(0, AnomalyDetector.MinVectorsRequired - meaningfulCount)} more data points to finish."
+                ? $" Process has exited — need {Math.Max(0, AnomalyDetector.MinVectorsRequired - snapshotCount)} more data points to finish."
                 : $" Stops automatically when the process exits or goes idle for {SnapshotStallAutoCaptureWindow.TotalSeconds:0}s.";
-            StatusText.Text = $"Watching {_targetProcess}... {meaningfulCount} of {target} data points collected.{exitHint}";
+            StatusText.Text = $"Watching {_targetProcess}... {snapshotCount} of {target} data points collected.{exitHint}";
         }
 
-        private static ProcessProfile? FindLatestProfile(string processNameNoExt)
+        private static List<ProcessProfile> FindAllMatchingProfiles(string processNameNoExt)
         {
             return MapToData.ActiveProfiles.Values
                 .Where(p => Path.GetFileNameWithoutExtension(p.ProcessName ?? "")
                     .Equals(processNameNoExt, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(p => p.FirstSeen)
-                .FirstOrDefault();
+                .ToList();
+        }
+
+        private int GetAggregateDeltaSnapshotCount(IEnumerable<ProcessProfile> profiles)
+        {
+            int total = 0;
+            foreach (var p in profiles)
+            {
+                int current = GetSnapshotCount(p);
+                int start = _recordingStartPerPid.TryGetValue(p.ProcessId, out var s) ? s : 0;
+                total += Math.Max(0, current - start);
+            }
+            return total;
         }
 
         private static int GetSnapshotCount(ProcessProfile? profile)
