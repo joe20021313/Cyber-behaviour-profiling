@@ -251,8 +251,7 @@ namespace Cyber_behaviour_profiling
 
             double trustMult = GetTrustMultiplier(name, nameNoExt, ctx);
             bool isLolBin = trustMult > 1.0;
-            // LOLBin launched by a non-shell parent (e.g. certutil.exe spawned by malware) —
-            // treat as suspicious regardless of signature; don't dampen or grant safe verdict.
+            
             bool isLolBinFromNonShell = isLolBin && !IsShellOrSystemLauncher(profile, ctx);
 
             if (!hasBehavioralRedFlag && !isLolBinFromNonShell)
@@ -2092,7 +2091,7 @@ namespace Cyber_behaviour_profiling
                 ctx.IsTrustedPublisher = false;
                 ctx.SignerName = "";
                 ctx.SignatureTrustState = SignatureTrustState.InvalidSignature;
-                ctx.SignatureSummary = "A digital signature is present, but trust validation failed.";
+                ctx.SignatureSummary = "Signature check failed unexpectedly.";
             }
         }
 
