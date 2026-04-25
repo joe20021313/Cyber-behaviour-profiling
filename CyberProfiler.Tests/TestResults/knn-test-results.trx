@@ -1,0 +1,42 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="52c52f50-61dc-4070-bf9f-f6fb4cf81193" name="User@DESKTOP-N67JM2A 2026-04-23 13:13:35" runUser="DESKTOP-N67JM2A\User" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-04-23T13:13:35.8942940+01:00" queuing="2026-04-23T13:13:35.8942941+01:00" start="2026-04-23T13:13:35.4262292+01:00" finish="2026-04-23T13:13:35.8979614+01:00" />
+  <TestSettings name="default" id="7386b84c-4e30-4497-a82a-33ac9789bd23">
+    <Deployment runDeploymentRoot="User_DESKTOP-N67JM2A_2026-04-23_13_13_35" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="861e17c4-1937-46ed-8b89-ad9a2ce9aeb4" testId="a9d0fb0c-df26-d9ac-ca11-ce1b1ad79484" testName="StandardDeviationKnnTests.RealBaseline_NormalActivity_IsNotFlagged" computerName="DESKTOP-N67JM2A" duration="00:00:00.0021923" startTime="2026-04-23T13:13:35.8315867+01:00" endTime="2026-04-23T13:13:35.8316301+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="861e17c4-1937-46ed-8b89-ad9a2ce9aeb4" />
+    <UnitTestResult executionId="bc26e230-1b36-4e49-afd9-23e81ebd3b41" testId="a26b2ea1-e595-35a6-1cb4-e575b8a67425" testName="StandardDeviationKnnTests.RealBaseline_MaliciousSpike_IsDetected" computerName="DESKTOP-N67JM2A" duration="00:00:00.0350948" startTime="2026-04-23T13:13:35.7859547+01:00" endTime="2026-04-23T13:13:35.8257048+01:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bc26e230-1b36-4e49-afd9-23e81ebd3b41" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="StandardDeviationKnnTests.RealBaseline_NormalActivity_IsNotFlagged" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="a9d0fb0c-df26-d9ac-ca11-ce1b1ad79484">
+      <Execution id="861e17c4-1937-46ed-8b89-ad9a2ce9aeb4" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="StandardDeviationKnnTests" name="RealBaseline_NormalActivity_IsNotFlagged" />
+    </UnitTest>
+    <UnitTest name="StandardDeviationKnnTests.RealBaseline_MaliciousSpike_IsDetected" storage="c:\users\user\documents\github\cyber-behaviour-profiling\cyberprofiler.tests\bin\debug\net10.0-windows\cyberprofiler.tests.dll" id="a26b2ea1-e595-35a6-1cb4-e575b8a67425">
+      <Execution id="bc26e230-1b36-4e49-afd9-23e81ebd3b41" />
+      <TestMethod codeBase="C:\Users\User\Documents\GitHub\Cyber-behaviour-profiling\CyberProfiler.Tests\bin\Debug\net10.0-windows\CyberProfiler.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="StandardDeviationKnnTests" name="RealBaseline_MaliciousSpike_IsDetected" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="a9d0fb0c-df26-d9ac-ca11-ce1b1ad79484" executionId="861e17c4-1937-46ed-8b89-ad9a2ce9aeb4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a26b2ea1-e595-35a6-1cb4-e575b8a67425" executionId="bc26e230-1b36-4e49-afd9-23e81ebd3b41" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="2" executed="2" passed="2" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.4+50e68bbb8b (64-bit .NET 10.0.3)&#xD;
+[xUnit.net 00:00:00.04]   Discovering: CyberProfiler.Tests&#xD;
+[xUnit.net 00:00:00.07]   Discovered:  CyberProfiler.Tests&#xD;
+[xUnit.net 00:00:00.08]   Starting:    CyberProfiler.Tests&#xD;
+[MALICIOUS] Avg: 57.9392 | KNN: 483.0021 | Threshold: 2.6429 | Diff: 480.3592 | Anomaly: True&#xD;
+[NORMAL] Avg: 0.0000 | KNN: 0.0000 | Threshold: 2.6429 | Diff: -2.6429 | Anomaly: False&#xD;
+[xUnit.net 00:00:00.14]   Finished:    CyberProfiler.Tests&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

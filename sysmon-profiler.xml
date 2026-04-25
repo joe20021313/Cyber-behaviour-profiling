@@ -1,0 +1,50 @@
+<Sysmon schemaversion="4.90">
+  <EventFiltering>
+
+  
+    <RuleGroup name="LsassAccess" groupRelation="or">
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="end with">lsass.exe</TargetImage>
+      </ProcessAccess>
+    </RuleGroup>
+    <RuleGroup name="LsassAccessNoise" groupRelation="or">
+      <ProcessAccess onmatch="exclude">
+        <SourceImage condition="end with">wmiprvse.exe</SourceImage>
+        <SourceImage condition="end with">VBoxService.exe</SourceImage>
+        <SourceImage condition="end with">vmtoolsd.exe</SourceImage>
+        <SourceImage condition="end with">taskmgr.exe</SourceImage>
+        <SourceImage condition="end with">procexp.exe</SourceImage>
+        <SourceImage condition="end with">procexp64.exe</SourceImage>
+        <SourceImage condition="end with">MsMpEng.exe</SourceImage>
+        <SourceImage condition="begin with">C:\Windows\System32\svchost.exe</SourceImage>
+        <!-- LSM and winlogon have routine LSASS contact -->
+        <SourceImage condition="end with">lsm.exe</SourceImage>
+        <SourceImage condition="end with">winlogon.exe</SourceImage>
+        <SourceImage condition="end with">wininit.exe</SourceImage>
+        <SourceImage condition="end with">csrss.exe</SourceImage>
+      </ProcessAccess>
+    </RuleGroup>
+
+   
+    <RuleGroup name="RemoteThread" groupRelation="or">
+      <CreateRemoteThread onmatch="exclude">
+        <SourceImage condition="end with">svchost.exe</SourceImage>
+        <SourceImage condition="end with">wininit.exe</SourceImage>
+        <SourceImage condition="end with">csrss.exe</SourceImage>
+        <SourceImage condition="end with">MsMpEng.exe</SourceImage>
+        <!-- .NET runtime creates remote threads into itself during JIT -->
+        <TargetImage condition="end with">mscorsvw.exe</TargetImage>
+        <StartModule condition="end with">wow64.dll</StartModule>
+        <StartModule condition="end with">wow64win.dll</StartModule>
+      </CreateRemoteThread>
+    </RuleGroup>
+
+  
+    <RuleGroup name="ProcessTampering" groupRelation="or">
+      <ProcessTampering onmatch="include">
+        <Image condition="is not">-</Image>
+      </ProcessTampering>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>

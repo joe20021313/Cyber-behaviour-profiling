@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.7" />
     <PackageReference Include="WPF-UI" Version="4.2.0" />
     <PackageReference Include="WPF-UI.Abstractions" Version="4.2.0" />
   </ItemGroup>
@@ -18,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Cyber-behaviour-profiling.csproj" />
     <None Include="..\..\data.json" Link="data.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\sysmon-profiler.xml" Link="sysmon-profiler.xml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

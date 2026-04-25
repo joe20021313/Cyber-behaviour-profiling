@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -61,6 +61,7 @@ namespace cyber_behaviour_profiling_2.Pages
         public SolidColorBrush ActivityBrush { get; set; } = new(Colors.Gray);
         internal string ActivityType { get; set; } = "";
         internal string RawDetail { get; set; } = "";
+        internal string OwnerProcess { get; set; } = "";
         internal DateTime Timestamp { get; set; }
 
         public string ShortName => $"[{Label}]  {Detail}";
@@ -78,6 +79,7 @@ namespace cyber_behaviour_profiling_2.Pages
         private MonitoringSessionResult? _lastResult;
 
         private readonly ObservableCollection<string> _selectedProcesses = new();
+        private string? _activeProcessTab = null;
 
         private readonly Dictionary<string, ActivityTileVM> _tileMap = new();
         private readonly List<ActivityTileVM> _tileList = new();
@@ -120,9 +122,20 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private void AddSelectedProcess(string processName)
         {
+            if (_selectedProcesses.Count >= LiveMonitoringSession.MaxMonitoredProcesses)
+            {
+                MessageBox.Show(
+                    $"You can monitor a maximum of {LiveMonitoringSession.MaxMonitoredProcesses} processes at once.",
+                    "Process Limit Reached",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             string normalizedName = Path.GetFileNameWithoutExtension(processName).ToLowerInvariant();
             if (!_selectedProcesses.Contains(normalizedName, StringComparer.OrdinalIgnoreCase))
                 _selectedProcesses.Add(normalizedName);
+            RefreshProcessTabs();
         }
 
         private void RefreshProcessList_Click(object sender, RoutedEventArgs e)
@@ -146,7 +159,10 @@ namespace cyber_behaviour_profiling_2.Pages
         private void RemoveProcess_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.Tag is string name)
+            {
                 _selectedProcesses.Remove(name);
+                RefreshProcessTabs();
+            }
         }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -231,7 +247,7 @@ namespace cyber_behaviour_profiling_2.Pages
             else
                 RecordActivityDetail(activity, ownerProcess, timeText);
 
-            AppendTimelineEntry(activity, timeText, isSpawnedProcessEvent);
+            AppendTimelineEntry(activity, ownerProcess, timeText, isSpawnedProcessEvent);
 
             if (_timeline.Count > MaxTimelineEntries)
                 _timeline.RemoveAt(0);
@@ -259,6 +275,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 ActivityBrush = ToActivityBrush(activity.ActivityType),
                 ActivityType = activity.ActivityType,
                 RawDetail = activity.Detail,
+                OwnerProcess = ownerProcess,
                 Timestamp = activity.Timestamp
             });
         }
@@ -324,7 +341,7 @@ namespace cyber_behaviour_profiling_2.Pages
             return tile;
         }
 
-        private void AppendTimelineEntry(RawActivityUpdate activity, string timeText, bool isSpawnedProcessEvent)
+        private void AppendTimelineEntry(RawActivityUpdate activity, string ownerProcess, string timeText, bool isSpawnedProcessEvent)
         {
             if (TryMergeTimelineBurst(activity, timeText))
                 return;
@@ -341,6 +358,7 @@ namespace cyber_behaviour_profiling_2.Pages
                 ActivityBrush = ToActivityBrush(activity.ActivityType),
                 ActivityType = activity.ActivityType,
                 RawDetail = activity.Detail,
+                OwnerProcess = ownerProcess,
                 Timestamp = activity.Timestamp
             });
         }
@@ -370,31 +388,90 @@ namespace cyber_behaviour_profiling_2.Pages
         {
             TileContainer.Children.Clear();
 
-            var grouped = _tileList
+            var visibleTiles = _activeProcessTab != null
+                ? _tileList.Where(t => t.OwnerProcess.Equals(_activeProcessTab, StringComparison.OrdinalIgnoreCase))
+                : _tileList;
+
+            var grouped = visibleTiles
                 .GroupBy(t => t.OwnerProcess, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(g => g.Key);
 
             foreach (var group in grouped)
             {
-                var first = group.First();
-                string headerText = first.ProcessId > 0
-                    ? $"{group.Key.ToUpper()} (PID {first.ProcessId})"
-                    : group.Key.ToUpper();
-
-                var header = new TextBlock
+                // Only show the process group header when viewing all processes (no tab active)
+                if (_activeProcessTab == null)
                 {
-                    Text = headerText,
-                    Style = (Style)FindResource("SectionLabel"),
-                    Margin = new Thickness(0, 8, 0, 6),
-                    FontSize = 12,
-                };
-                TileContainer.Children.Add(header);
+                    var first = group.First();
+                    string headerText = first.ProcessId > 0
+                        ? $"{group.Key.ToUpper()} (PID {first.ProcessId})"
+                        : group.Key.ToUpper();
+
+                    var header = new TextBlock
+                    {
+                        Text = headerText,
+                        Style = (Style)FindResource("SectionLabel"),
+                        Margin = new Thickness(0, 8, 0, 6),
+                        FontSize = 12,
+                    };
+                    TileContainer.Children.Add(header);
+                }
 
                 var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
                 foreach (var tile in group.OrderByDescending(t => t.TotalCount))
                     wrap.Children.Add(CreateTileButton(tile));
                 TileContainer.Children.Add(wrap);
             }
+        }
+
+        private void RefreshProcessTabs()
+        {
+            ProcessTabStrip.Children.Clear();
+
+            if (_selectedProcesses.Count <= 1)
+            {
+                ProcessTabStrip.Visibility = Visibility.Collapsed;
+                _activeProcessTab = null;
+                return;
+            }
+
+            ProcessTabStrip.Visibility = Visibility.Visible;
+
+            if (_activeProcessTab == null ||
+                !_selectedProcesses.Contains(_activeProcessTab, StringComparer.OrdinalIgnoreCase))
+                _activeProcessTab = _selectedProcesses[0];
+
+            foreach (string proc in _selectedProcesses)
+            {
+                bool isActive = proc.Equals(_activeProcessTab, StringComparison.OrdinalIgnoreCase);
+                var btn = new Button
+                {
+                    Content = proc.ToUpperInvariant(),
+                    Tag = proc,
+                    Margin = new Thickness(0, 0, 6, 0),
+                    Padding = new Thickness(14, 6, 14, 6),
+                    FontSize = 12,
+                    FontWeight = isActive ? FontWeights.SemiBold : FontWeights.Normal,
+                    BorderThickness = new Thickness(0, 0, 0, isActive ? 2 : 0),
+                    BorderBrush = isActive
+                        ? (Brush)FindResource("AccentTextFillColorPrimaryBrush")
+                        : Brushes.Transparent,
+                    Background = Brushes.Transparent,
+                    Foreground = isActive
+                        ? (Brush)FindResource("TextFillColorPrimaryBrush")
+                        : (Brush)FindResource("TextFillColorSecondaryBrush"),
+                };
+                btn.Click += ProcessTab_Click;
+                ProcessTabStrip.Children.Add(btn);
+            }
+        }
+
+        private void ProcessTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button btn || btn.Tag is not string proc) return;
+            _activeProcessTab = proc;
+            RefreshProcessTabs();
+            RebuildGroupedTiles();
+            if (_reportOpen) ExpandReportPanel();
         }
 
         private Button CreateTileButton(ActivityTileVM tile)
@@ -500,7 +577,10 @@ namespace cyber_behaviour_profiling_2.Pages
 
         private void ExpandReportPanel()
         {
-            ReportList.ItemsSource = GetRecentTimelineEntries(_timeline);
+            var timelineEntries = _activeProcessTab != null
+                ? _timeline.Where(e => e.OwnerProcess.Equals(_activeProcessTab, StringComparison.OrdinalIgnoreCase))
+                : (IEnumerable<TimelineEntryVM>)_timeline;
+            ReportList.ItemsSource = GetRecentTimelineEntries(timelineEntries);
             GreyOverlay.Visibility = Visibility.Visible;
             ReportChevron.Text = "\u25BC";
             _reportOpen = true;
@@ -538,6 +618,7 @@ namespace cyber_behaviour_profiling_2.Pages
             _lastReportPath = null;
             _lastMetadataPath = null;
             _lastResult = null;
+            _activeProcessTab = null;
             while (_activityQueue.TryDequeue(out _)) { }
             TileContainer.Children.Clear();
             TimelineList.ItemsSource = null;
@@ -545,6 +626,7 @@ namespace cyber_behaviour_profiling_2.Pages
             EmptyEventsText.Visibility = Visibility.Visible;
             DetailRowDef.Height = new GridLength(0);
             ShowResultsButton.Visibility = Visibility.Collapsed;
+            RefreshProcessTabs();
         }
 
         private Task StartMonitoringAsync()

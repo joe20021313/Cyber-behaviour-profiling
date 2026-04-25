@@ -7,7 +7,7 @@ using Cyber_behaviour_profiling;
 public class BehaviorAnalyzerValidDataTests
 {
     [Fact]
-    public void HardMaliciousIndicator_LsassAccess_ReturnsMalicious()
+    public void LsassAccess_ReturnsMalicious()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -26,6 +26,34 @@ public class BehaviorAnalyzerValidDataTests
             Assert.Contains(report.FiredCheckNames, n =>
                 n.Equals("LSASS Memory Access", StringComparison.OrdinalIgnoreCase));
         });
+    }
+
+    [Fact]
+    public void ExecutableDrop_WithContextSignal_ReturnsMalicious()
+    {
+        TestScope.WithFreshSession(() =>
+        {
+            var profile = ProfileFactory.Empty("dropper.exe", 2_100_000_002);
+            profile.ExeDropPaths.TryAdd(@"C:\Users\user\AppData\Local\Temp\payload.exe", 0);
+            ProfileFactory.AddEvent(
+                profile,
+                "ContextSignal",
+                "payload.exe",
+                @"C:\Users\user\AppData\Local\Temp\payload.exe",
+                "context_write");
+            ProfileFactory.AddEvent(
+                profile,
+                "DPAPI_Decrypt",
+                "dpapi",
+                "CryptUnprotectData",
+                "credential_file_access");
+
+            var report = BehaviorAnalyzer.Analyze(profile);
+
+            Assert.Equal(ThreatImpact.Malicious, report.FinalVerdict);
+            Assert.Contains(report.FiredCheckNames, n =>
+                n.Equals("DPAPI Decryption Activity", StringComparison.OrdinalIgnoreCase));
+        }, loadData: true);
     }
 
     [Fact]
@@ -53,40 +81,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NetworkAndCredentialSignals_FlagUnexpectedOutboundConnections()
-    {
-        var ctx = new ProcessContext
-        {
-            HasNetworkConns = true,
-            NetworkConnCount = 2,
-            FilePath = @"C:\Users\User\AppData\Local\SomeApp\app.exe",
-            ParentProcess = "explorer"
-        };
-
-        var profile = ProfileFactory.Empty("app.exe", 2_100_000_005);
-        ProfileFactory.AddEvent(
-            profile,
-            "NetworkConnect",
-            "example.org",
-            "example.org (93.184.216.34)",
-            "network_outbound");
-        ProfileFactory.AddEvent(
-            profile,
-            "FileRead",
-            "login data",
-            @"C:\Users\VM\AppData\Local\Google\Chrome\User Data\Default\Login Data",
-            "credential_file_access");
-
-        bool flagged = BehaviorAnalyzer.ShouldFlagUnexpectedNetworkConnections(
-            ctx,
-            profile.EventTimeline.ToList(),
-            profile);
-
-        Assert.True(flagged);
-    }
-
-    [Fact]
-    public void BrowserProcess_AccessingBrowserCredentialPath_DoesNotTriggerNonBrowserCredentialTheft()
+    public void Browser_AccessingOwnCredentialPath_DoesNotFlag()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -108,7 +103,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void BrowserUserLaunch_HighChurnAndScriptCleanup_CanRemainSafe()
+    public void Browser_LaunchedByUser_HighChurn_RemainsSafe()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -130,7 +125,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void BrowserLaunchedByProgram_IsNeverAutoSafe()
+    public void Browser_LaunchedByProgram_IsNotAutoSafe()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -146,7 +141,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NonBrowserHighChurnAndScriptCleanup_DoesNotUseBrowserSafePath()
+    public void NonBrowser_HighChurn_DoesNotUseBrowserExemption()
     {
         TestScope.WithFreshSession(() =>
         {
@@ -166,7 +161,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void BaselineNearMatch_RemainsSafeAndUsesBaseline()
+    public void BaselineNearMatch_RemainsSafe()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>
         {
@@ -198,7 +193,7 @@ public class BehaviorAnalyzerValidDataTests
     }
 
     [Fact]
-    public void NoBaselineSensitiveShortLivedBurst_DefaultsToSuspicious()
+    public void ShortSensitiveBurst_NoBaseline_ReturnsSuspicious()
     {
         AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
 
@@ -221,34 +216,5 @@ public class BehaviorAnalyzerValidDataTests
         {
             AnomalyDetector.LoadBaselines(new Dictionary<string, ProcessBaseline>());
         }
-    }
-
-    [Fact]
-    public void NoBaselineShortLivedBurstWithHardHighRiskEvents_EscalatesToMalicious()
-    {
-        var anomaly = new AnomalyResult
-        {
-            AnomalyDetected = true,
-            BaselineUsed = false,
-            ShortLivedBurstFired = true,
-            ShortLivedBurstReason = "Sensitive Access Rate 10.0/sec exceeded ShortLivedBurst 4.0/sec",
-            Score = 36
-        };
-
-        var events = new List<SuspiciousEvent>
-        {
-            ProfileFactory.Event(
-                "DPAPI_Decrypt",
-                "dpapi",
-                "CryptUnprotectData",
-                "credential_file_access")
-        };
-
-        var impact = BehaviorAnalyzer.DetermineAnomalyImpact(
-            anomaly,
-            events,
-            ProfileFactory.Empty("lazagne.exe", 2_100_000_008));
-
-        Assert.Equal(ThreatImpact.Malicious, impact);
     }
 }

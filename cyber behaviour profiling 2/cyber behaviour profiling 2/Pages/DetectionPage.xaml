@@ -195,18 +195,25 @@
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
                         <TextBlock Style="{StaticResource SectionLabel}"
                                    Text="ACTIVITY" Margin="0,0,0,12"/>
 
-                        <TextBlock x:Name="EmptyEventsText" Grid.Row="1"
+                        <WrapPanel x:Name="ProcessTabStrip"
+                                   Grid.Row="1"
+                                   Visibility="Collapsed"
+                                   Orientation="Horizontal"
+                                   Margin="0,0,0,10"/>
+
+                        <TextBlock x:Name="EmptyEventsText" Grid.Row="2"
                                    Text="No events yet, start monitoring a process."
                                    FontSize="13" VerticalAlignment="Center" HorizontalAlignment="Center"
                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
-                        <ScrollViewer Grid.Row="1"
+                        <ScrollViewer Grid.Row="2"
                                       VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="TileContainer" />

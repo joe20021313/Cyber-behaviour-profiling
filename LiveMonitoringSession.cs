@@ -48,6 +48,8 @@ namespace Cyber_behaviour_profiling
 
     public class LiveMonitoringSession : IDisposable
     {
+        public const int MaxMonitoredProcesses = 4;
+
         private readonly object _sync = new();
         private readonly HashSet<uint> _monitoredPids = new();
         private readonly Dictionary<uint, string> _pidToTarget = new();
@@ -62,6 +64,7 @@ namespace Cyber_behaviour_profiling
         private Thread? _kernelThread;
         private Thread? _psThread;
         private HashSet<string> _targetProcesses = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<uint, uint> _childPidToParentPid = new();
         private bool _isRunning;
         private bool _powerShellLoggingEnabled;
         private Timer? _snapshotTimer;
@@ -91,6 +94,9 @@ namespace Cyber_behaviour_profiling
             if (targets.Count == 0)
                 throw new ArgumentException("At least one process name is required.", nameof(targetProcesses));
 
+            if (targets.Count > MaxMonitoredProcesses)
+                throw new ArgumentException($"Cannot monitor more than {MaxMonitoredProcesses} processes at once.", nameof(targetProcesses));
+
             if (!File.Exists(dataFilePath))
                 throw new FileNotFoundException("Could not find data.json for the monitoring rules.", dataFilePath);
 
@@ -102,6 +108,7 @@ namespace Cyber_behaviour_profiling
                 _targetProcesses = new HashSet<string>(targets, StringComparer.OrdinalIgnoreCase);
                 _monitoredPids.Clear();
                 _pidToTarget.Clear();
+                _childPidToParentPid.Clear();
                 foreach (var name in _targetProcesses)
                     foreach (var process in Process.GetProcessesByName(name))
                     {
@@ -383,14 +390,20 @@ namespace Cyber_behaviour_profiling
                 doc.LoadXml(xml);
 
                 var eventId = record.Id;
-                var nsMgr = new XmlNamespaceManager(doc.NameTable);
-                nsMgr.AddNamespace("ns", "http://schemas.microsoft.com/win/2004/08/events/event");
 
-                var imageNode = doc.SelectSingleNode("//ns:Data[@Name='Image']", nsMgr);
+                // Use local-name() to avoid namespace issues with EventRecord.ToXml() output.
+                static XmlNode? DataNode(XmlDocument d, string name) =>
+                    d.SelectSingleNode($"//*[local-name()='Data'][@Name='{name}']");
+
+                // EventID 10/8 use 'SourceImage'/'SourceProcessId'; other events use 'Image'/'ProcessId'.
+                var imageNode = DataNode(doc, "Image") ?? DataNode(doc, "SourceImage");
                 string image = imageNode?.InnerText?.ToLower() ?? "";
-                if (!_targetProcesses.Any(t => image.Contains(t))) return;
 
-                var dataNodes = doc.SelectNodes("//ns:Data", nsMgr);
+                // EventID 25 (ProcessTampering) reports the victim process, not the attacker.
+                // Skip the name filter here; correlation happens after we read the PID.
+                if (eventId != 25 && !_targetProcesses.Any(t => image.Contains(t))) return;
+
+                var dataNodes = doc.SelectNodes("//*[local-name()='Data']");
                 string destinationHostname = "";
                 string targetImage = "";
                 int pid = 0;
@@ -400,7 +413,7 @@ namespace Cyber_behaviour_profiling
                     string value = node.InnerText;
                     if (name == "DestinationHostname") destinationHostname = value;
                     if (name == "TargetImage") targetImage = value.ToLower();
-                    if (name == "ProcessId" && int.TryParse(value, out int parsedPid)) pid = parsedPid;
+                    if ((name == "ProcessId" || name == "SourceProcessId") && int.TryParse(value, out int parsedPid)) pid = parsedPid;
                 }
 
                 if (eventId == 3 && !string.IsNullOrEmpty(destinationHostname))
@@ -413,7 +426,18 @@ namespace Cyber_behaviour_profiling
                     MapToData.AddEventToProfile(pid, image, "RemoteThreadInjection", targetImage, targetImage, "process_injection", "Sysmon");
 
                 if (eventId == 25)
-                    MapToData.AddEventToProfile(pid, image, "ProcessTampering", image, image, "process_tampering", "Sysmon");
+                {
+                    if (_childPidToParentPid.TryGetValue((uint)pid, out uint parentPid) &&
+                        _pidToTarget.TryGetValue(parentPid, out string parentTarget))
+                    {
+                        MapToData.AddEventToProfile((int)parentPid, parentTarget + ".exe",
+                            "ProcessTampering", image, image, "process_tampering", "Sysmon");
+                    }
+                    else if (_targetProcesses.Any(t => image.Contains(t)))
+                    {
+                        MapToData.AddEventToProfile(pid, image, "ProcessTampering", image, image, "process_tampering", "Sysmon");
+                    }
+                }
             }
             catch { }
         }
@@ -532,6 +556,7 @@ namespace Cyber_behaviour_profiling
                         return;
 
                     _monitoredPids.Add((uint)data.ProcessID);
+                    _childPidToParentPid[(uint)data.ProcessID] = (uint)data.ParentID;
                     if (_pidToTarget.TryGetValue((uint)data.ParentID, out var parentTarget))
                         _pidToTarget[(uint)data.ProcessID] = parentTarget;
 

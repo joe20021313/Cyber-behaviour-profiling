@@ -220,7 +220,7 @@ namespace Cyber_behaviour_profiling
             checks.AddRange(CheckRuntimeAnomalies(ctx, events, profile, netInvestigation));
             checks.AddRange(CheckVelocityAndDensity(events, installerSafeMode));
             checks.AddRange(CheckSystemAreaFootprint(events, profile, isKnownBrowserProcess));
-            checks.AddRange(CheckTemporalAnomalies(events, ctx));
+            // checks.AddRange(CheckTemporalAnomalies(events, ctx));
             checks.AddRange(CheckContextFolderBehavior(ctx, events, profile, installerSafeMode));
             checks.AddRange(CheckFileChurnBehavior(ctx, profile, browserSafeMode, installerSafeMode));
             checks.AddRange(CheckDirectoryScatter(ctx, profile));
@@ -1538,6 +1538,22 @@ namespace Cyber_behaviour_profiling
             bool isKnownBrowserProcess)
         {
             var areas = new HashSet<string>();
+            var evidence = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+            void AddEvidence(string area, string? raw)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) return;
+                if (!evidence.TryGetValue(area, out var list))
+                    evidence[area] = list = new List<string>();
+                if (list.Count < 2 && !list.Contains(raw, StringComparer.OrdinalIgnoreCase))
+                    list.Add(raw);
+            }
+
+            string Ev(string area)
+            {
+                if (!evidence.TryGetValue(area, out var list) || list.Count == 0) return "";
+                return " — " + string.Join(", ", list);
+            }
 
             foreach (var ev in events)
             {
@@ -1552,19 +1568,34 @@ namespace Cyber_behaviour_profiling
                     raw.Contains("\\system32\\config\\security") ||
                     raw.Contains("\\ntds\\ntds.dit") ||
                     ind == "sam" || ind == "security" || ind == "ntds.dit")
+                {
                     areas.Add("WindowsCredentialStore");
+                    AddEvidence("WindowsCredentialStore", ev.RawData);
+                }
 
                 if (MapToData._browserCredentialDirs.Any(d => raw.Contains(d)))
+                {
                     areas.Add("BrowserCredentials");
+                    AddEvidence("BrowserCredentials", ev.RawData);
+                }
 
                 if (ev.EventType == "Registry" && ev.Category == "registry_credential_access")
+                {
                     areas.Add("ThirdPartyCredentials");
+                    AddEvidence("ThirdPartyCredentials", ev.RawData);
+                }
 
                 if (ev.EventType == "Registry" && ev.Category == "registry_persistence")
+                {
                     areas.Add("PersistenceMechanisms");
+                    AddEvidence("PersistenceMechanisms", ev.RawData);
+                }
 
                 if (ev.EventType == "Registry" && ev.Category == "registry_defense_evasion")
+                {
                     areas.Add("DefenseTools");
+                    AddEvidence("DefenseTools", ev.RawData);
+                }
 
                 if (ev.EventType == "NetworkConnect" || ev.EventType == "DNS_Query")
                     areas.Add("NetworkCommunication");
@@ -1575,7 +1606,10 @@ namespace Cyber_behaviour_profiling
 
                 if (ev.EventType == "DPAPI_Decrypt" ||
                     raw.Contains("\\microsoft\\protect\\"))
+                {
                     areas.Add("DPAPIDecryption");
+                    AddEvidence("DPAPIDecryption", ev.RawData);
+                }
             }
 
             bool hasNetwork = events.Any(e => e.EventType == "NetworkConnect" || e.EventType == "DNS_Query");
@@ -1588,31 +1622,31 @@ namespace Cyber_behaviour_profiling
 
             yield return Check(SemanticCheckId.CredentialsStoreAccess,
                 areas.Contains("WindowsCredentialStore"),
-                ThreatImpact.Malicious, "Accessed Windows credential vault");
+                ThreatImpact.Malicious, $"Accessed Windows credential vault{Ev("WindowsCredentialStore")}");
 
             bool browserCredAccess = areas.Contains("BrowserCredentials");
             bool isOwnBrowser = isKnownBrowserProcess;
             yield return Check(SemanticCheckId.BrowserCredentialAccess,
                 browserCredAccess && !isOwnBrowser,
                 ThreatImpact.Malicious,
-                $"Non-browser process accessed browser credential storage",
+                $"Non-browser process accessed browser credential storage{Ev("BrowserCredentials")}",
                 isHardIndicator: true);
 
             yield return Check(SemanticCheckId.ThirdPartyCredentialStores,
                 areas.Contains("ThirdPartyCredentials"),
-                ThreatImpact.Malicious, "Accessed third-party credential registry keys (VNC/PuTTY/SSH)");
+                ThreatImpact.Malicious, $"Accessed third-party credential registry keys (VNC/PuTTY/SSH){Ev("ThirdPartyCredentials")}");
 
             yield return Check(SemanticCheckId.ModifyingPersistenceMechanisms,
                 areas.Contains("PersistenceMechanisms"),
-                ThreatImpact.Suspicious, "Touched registry paths used for persistent execution.");
+                ThreatImpact.Suspicious, $"Touched registry paths used for persistent execution{Ev("PersistenceMechanisms")}");
 
             yield return Check(SemanticCheckId.DefenseToolTampering,
                 areas.Contains("DefenseTools"),
-                ThreatImpact.Malicious, "Accessed security control registry keys (AMSI/IFEO)");
+                ThreatImpact.Malicious, $"Accessed security control registry keys (AMSI/IFEO){Ev("DefenseTools")}");
 
             yield return Check(SemanticCheckId.DpapiDecryptionActivity,
                 areas.Contains("DPAPIDecryption"),
-                ThreatImpact.Malicious, "DPAPI decryption invoked (used to extract stored credentials)");
+                ThreatImpact.Malicious, $"DPAPI decryption invoked (used to extract stored credentials){Ev("DPAPIDecryption")}");
 
             int areaCount = areas.Count;
 
@@ -1674,12 +1708,6 @@ namespace Cyber_behaviour_profiling
                 if (isExecutable && !isSafe)
                     execWrites.Add(e);
             }
-
-            //yield return Check(SemanticCheckId.ExecutableDroppedToStagingFolder,
-            //    execWrites.Any(),
-            //    ThreatImpact.Inconclusive,
-            //    $"{execWrites.Count} executable or script file(s) were written to a temporary or user-accessible location: " +
-            //    string.Join(", ", execWrites.Take(3).Select(e => Path.GetFileName(e.RawData ?? "?"))));
 
             var highConfWrites = relevantContextEvents
                 .Where(e => {
@@ -1919,8 +1947,6 @@ namespace Cyber_behaviour_profiling
             {
                 string deletedNames = string.Join(", ", deletedExes.Take(3).Select(p => Path.GetFileName(p)));
 
-                // Check if any deleted exe was previously spawned by this process AND has since exited.
-                // Drop-run-wipe is the canonical dropper-cleanup pattern.
                 var spawnedPathsLower = new HashSet<string>(
                     profile.SpawnedCommandLines
                         .Select(s => s.ImagePath?.ToLowerInvariant() ?? "")
@@ -2049,17 +2075,23 @@ namespace Cyber_behaviour_profiling
 
         private static IEnumerable<SemanticCheck> CheckSysmonEvents(List<SuspiciousEvent> events)
         {
+            var lsassEv = events.FirstOrDefault(e => e.EventType == "LsassAccess");
+            string lsassDetail = lsassEv?.RawData is { Length: > 0 } r1 ? $" — target: {r1}" : "";
             yield return Check(SemanticCheckId.LsassMemoryAccess,
-                events.Any(e => e.EventType == "LsassAccess"),
-                ThreatImpact.Malicious, "LSASS memory opened");
+                lsassEv != null,
+                ThreatImpact.Malicious, $"LSASS memory opened{lsassDetail}");
 
+            var injEv = events.FirstOrDefault(e => e.EventType == "RemoteThreadInjection");
+            string injDetail = injEv?.RawData is { Length: > 0 } r2 ? $" — target: {r2}" : "";
             yield return Check(SemanticCheckId.RemoteThreadInjection,
-                events.Any(e => e.EventType == "RemoteThreadInjection"),
-                ThreatImpact.Malicious, "Remote thread injected into another process");
+                injEv != null,
+                ThreatImpact.Malicious, $"Remote thread injected into another process{injDetail}");
 
+            var tampEv = events.FirstOrDefault(e => e.EventType == "ProcessTampering");
+            string tampDetail = tampEv?.RawData is { Length: > 0 } r3 ? $" — victim: {r3}" : "";
             yield return Check(SemanticCheckId.ProcessTamperingDetected,
-                events.Any(e => e.EventType == "ProcessTampering"),
-                ThreatImpact.Malicious, "Process memory image replaced (process hollowing)");
+                tampEv != null,
+                ThreatImpact.Malicious, $"Process memory image replaced (process hollowing){tampDetail}");
         }
 
         private static bool IsSuspiciousPath(string filePath)

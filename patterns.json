@@ -1,0 +1,32 @@
+{
+  "headlines": {
+    "file": [
+      {
+        "keyword": "login data",
+        "text": "Read browser saved-password database"
+      },
+      { "keyword": "cookies", "text": "Read browser session cookies" },
+      { "keyword": "key4.db", "text": "Read Firefox key store" },
+      { "keyword": "\\protect\\", "text": "Accessed DPAPI credential folder" }
+    ],
+    "registry": [
+      {
+        "keyword": "currentversion\\run",
+        "text": "Added/modified startup Run key"
+      },
+      { "keyword": "winlogon", "text": "Modified Winlogon key" },
+      { "keyword": "image file execution options", "text": "Accessed IFEO key" }
+    ],
+    "network": [
+      { "keyword": "telegram", "text": "Connected to Telegram API" },
+      { "keyword": "pastebin", "text": "Connected to Pastebin" },
+      { "keyword": "ngrok", "text": "Connected to ngrok tunnel" },
+      { "keyword": "discord", "text": "Connected to Discord webhook" }
+    ],
+    "process": [
+      { "keyword": "powershell", "text": "Launched PowerShell" },
+      { "keyword": "cmd.exe", "text": "Launched cmd.exe" },
+      { "keyword": "mimikatz", "text": "Spawned known credential dumping tool" }
+    ]
+  }
+}

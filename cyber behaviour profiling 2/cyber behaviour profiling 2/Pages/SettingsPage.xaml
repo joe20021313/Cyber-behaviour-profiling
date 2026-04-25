@@ -52,6 +52,71 @@
                 </StackPanel>
             </Border>
 
+            <!-- SYSMON COVERAGE -->
+            <Border Style="{StaticResource PanelCard}">
+                <StackPanel>
+                    <TextBlock Text="Sysmon Configuration" Style="{StaticResource CardTitle}"/>
+                    <TextBlock Text="Sysmon provides kernel-level visibility for LSASS credential access, process injection, and process hollowing. All three require Sysmon to be installed and configured, click the button below to apply the profiler's recommended configuration. Requires administrator privileges. Disable when not in use."
+                               Style="{StaticResource CardDesc}"/>
+
+                    <!-- Status rows -->
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                            <RowDefinition Height="28"/>
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="Sysmon Service"
+                                   Grid.Row="0" Grid.Column="0"
+                                   FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="SysmonServiceStatus"
+                                   Grid.Row="0" Grid.Column="1"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                        <TextBlock Text="LSASS Access Detection  (EventID 10)"
+                                   Grid.Row="1" Grid.Column="0"
+                                   FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="SysmonEv10Status"
+                                   Grid.Row="1" Grid.Column="1"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                        <TextBlock Text="Thread Injection Detection  (EventID 8)"
+                                   Grid.Row="2" Grid.Column="0"
+                                   FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="SysmonEv8Status"
+                                   Grid.Row="2" Grid.Column="1"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+
+                        <TextBlock Text="Process Hollowing Detection  (EventID 25)"
+                                   Grid.Row="3" Grid.Column="0"
+                                   FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                        <TextBlock x:Name="SysmonEv25Status"
+                                   Grid.Row="3" Grid.Column="1"
+                                   FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal">
+                        <ui:Button Content="Refresh"
+                                   Appearance="Secondary" Margin="0,0,10,0"
+                                   Click="RefreshSysmon_Click"/>
+                        <ui:Button x:Name="ApplySysmonConfigButton"
+                                   Content="Apply Profiler Config"
+                                   Appearance="Primary"
+                                   Click="ApplySysmonConfig_Click"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </Page>
