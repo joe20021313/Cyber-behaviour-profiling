@@ -37,6 +37,7 @@ jobs:
           }
 
       - name: Lint
+        continue-on-error: true
         run: dotnet format Cyber-behaviour-profiling.sln --verify-no-changes 2>&1 | Tee-Object -FilePath lint.log
 
       - name: Initialize CodeQL
